@@ -1,4 +1,4 @@
-FROM osrf/ros:jazzy-perception
+FROM osrf/ros:jazzy-ros-base
 
 SHELL ["/bin/bash", "-c"]
 
@@ -15,6 +15,12 @@ RUN apt update && apt install -y \
   python3-rosdep \
   python3-vcstool \
   python3-argcomplete
+
+RUN apt-get update && apt-get install -y \
+ros-jazzy-image-transport \
+ros-jazzy-cv-bridge \
+ros-jazzy-vision-opencv \
+&& rm -rf /var/lib/apt/lists/*
 
 RUN rosdep init || true && rosdep update
 
