@@ -1,4 +1,4 @@
-FROM osrf/ros:jazzy-ros-base
+FROM ros:jazzy-ros-base
 
 SHELL ["/bin/bash", "-c"]
 
