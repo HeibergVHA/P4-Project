@@ -4,6 +4,9 @@ from std_msgs.msg import String  # stays the same, String handles XML too
 import socket
 import pandas as pd
 import xml.etree.ElementTree as ET
+from ament_index_python.packages import get_package_share_directory
+import os
+
 
 class MyNode(Node):
 
@@ -11,8 +14,10 @@ class MyNode(Node):
         super().__init__('process_node')   # Register node name with ROS2
         self.sub = self.create_subscription(String, 'tcp_topic', self.tcp_callback, 10)
         self.pub = self.create_publisher(String, 'process_topic', 10)
-
-        self.df = pd.read_csv('/home/heiberg/plc_ws/src/PLC/PLC/procssing_times_table.csv', sep=';', index_col=0)        
+        
+        package_path = get_package_share_directory('PLC')
+        csv_path = os.path.join(package_path, 'procssing_times_table.csv')
+        self.df = pd.read_csv(csv_path, sep=';', index_col=0)
         self.data = self.df.values  # converts to numpy 2D array
         self.latest_msg = None  # will hold the latest message from tcp_node
 
