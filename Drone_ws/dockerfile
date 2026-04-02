@@ -40,6 +40,8 @@ ENV ROS_DOMAIN_ID=7
 
 RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
 
+RUN pip install pandas --break-system-packages
+
 WORKDIR /ros2_ws
 
 COPY entrypoint.sh /entrypoint.sh
