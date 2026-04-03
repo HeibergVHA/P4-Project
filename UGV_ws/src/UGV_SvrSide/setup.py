@@ -27,6 +27,7 @@ setup(
         'console_scripts': [
         'tcp_node = UGV_SvrSide.Tcp_node:main',
         'process_node = UGV_SvrSide.process_node:main',
+        'ugv_svrside = UGV_SvrSide.UGV_SvrSide:main'
         ],
     },
 )

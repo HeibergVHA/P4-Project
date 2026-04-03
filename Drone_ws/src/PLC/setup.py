@@ -27,6 +27,7 @@ setup(
         'console_scripts': [
         'tcp_node = PLC.Tcp_node:main',
         'process_node = PLC.process_node:main',
+        'drone_cltside = PLC.Drone_Cltside:main',
         ],
     },
 )
