@@ -10,7 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/PLC/', ['PLC/procssing_times_table.csv']),
+        ('share/UGV_SvrSide/', ['UGV_SvrSide/procssing_times_table.csv']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,8 +25,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-        'tcp_node = PLC.Tcp_node:main',
-        'process_node = PLC.process_node:main',
+        'tcp_node = UGV_SvrSide.Tcp_node:main',
+        'process_node = UGV_SvrSide.process_node:main',
         ],
     },
 )
