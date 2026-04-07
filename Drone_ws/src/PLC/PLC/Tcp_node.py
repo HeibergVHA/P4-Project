@@ -56,7 +56,7 @@ class MyNode(Node):
 
         if self.latest_msg is not None:
             self.get_logger().info(f"Received from process_node: {self.latest_msg}")
-            msg = self.latest_msg.encode('utf-8')
+            msg = (self.latest_msg + "\r\n").encode('utf-8')
             self.conn.sendall(msg)
             self.get_logger().info(f"Sending to client: {msg}")
 
