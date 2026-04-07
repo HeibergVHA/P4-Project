@@ -34,13 +34,24 @@ RUN apt update && apt install -y \
   libgflags-dev \
   && rm -rf /var/lib/apt/lists/*
 
+# MAVROS + GeographicLib datasets
+RUN apt-get update && apt-get install -y \
+  ros-jazzy-mavros \
+  ros-jazzy-mavros-extras \
+  ros-jazzy-mavros-msgs \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN /opt/ros/jazzy/lib/mavros/install_geographiclib_datasets.sh
+
 ENV DISPLAY=:0
 ENV QT_X11_NO_MITSHM=1
 ENV ROS_DOMAIN_ID=7
 
 RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
 
-RUN pip install pandas --break-system-packages
+RUN pip install pandas --break-system-packages \
+  future \
+  pyserial
 
 WORKDIR /ros2_ws
 
