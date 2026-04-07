@@ -20,6 +20,7 @@ class MyNode(Node):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.bind((self.host, self.port))
         self.s.listen()
+        self.s.settimeout(0.05)   # 50 ms accept timeout
 
         self.get_logger().info(f"TCP server started on {self.host}:{self.port}")
 
@@ -32,6 +33,7 @@ class MyNode(Node):
         if self.conn is None:
             try:
                 self.conn, addr = self.s.accept()
+                self.conn.settimeout(0.01)  # 10 ms recv timeout
                 self.get_logger().info(f'connected by {addr}')
             except socket.timeout:
                 self.get_logger().info("No connection, retrying...")
