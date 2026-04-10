@@ -3,6 +3,7 @@ from rclpy.node import Node
 from rclpy.serialization import serialize_message
 from std_msgs.msg import String
 from sensor_msgs.msg import PointCloud2, Imu
+from livox_interfaces.msg import Custommsg
 
 import rosbag2_py
 
@@ -65,5 +66,5 @@ def main(args=None):
     rclpy.shutdown()
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == '__main__': 
+    main() 
