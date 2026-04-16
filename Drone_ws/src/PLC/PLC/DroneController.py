@@ -1,9 +1,9 @@
 import rclpy
 from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped # 'Pose' data type.
 from mavros_msgs.msg import State, Thrust
 from mavros_msgs.srv import CommandBool, SetMode
-from geometry_msgs.msg import PoseStamped
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R # To convert between Euler degrees and quatanions.
 
 ################ "ros2 run pakage node --ros-args -p input_source:=vicon" #############
 
@@ -54,8 +54,8 @@ class DroneController(Node):
 
         # Target position
         self.target_x = 0.0             # Meters
-        self.targer_y = 0.0
-        self.targer_z = 0.0
+        self.target_y = 0.0
+        self.target_z = 0.0
 
         # Orientation (attitude) setpoints
         self.target_roll  = 0.0         # Degrees
@@ -83,8 +83,8 @@ class DroneController(Node):
 
     def target_pos_callback(self, msg):
         self.target_x = msg.pose.position.x
-        self.targer_y = msg.pose.position.y
-        self.targer_z = msg.pose.position.z
+        self.target_y = msg.pose.position.y
+        self.target_z = msg.pose.position.z
 
     
     def control_loop(self): # Control loop (50 Hz)
@@ -97,7 +97,7 @@ class DroneController(Node):
         self.target_roll  = 0.0 ### In degrees ### PID based on position feedback from VICON or ...
         self.target_pitch = 0.0 #### PID based on position feedback from VICON or ...
         self.target_yaw   = 0.0 #### PID based on position feedback from VICON or ...
-        self.target_thrust = 0.25 #### PID based on height over ground (and maby angle because the force vector no longer vertical). 0.0 to 1.0
+        self.target_thrust = 0.05 #### PID based on height over ground (and maby angle because the force vector no longer vertical). 0.0 to 1.0
         ### Lige her #########
 
         
@@ -106,7 +106,7 @@ class DroneController(Node):
         r = R.from_euler('xyz', [self.target_roll, self.target_pitch, self.target_yaw], degrees=True) # Euler degrees to quatanions -->
         q = r.as_quat()  # [x, y, z, w]
 
-        att_msg = PoseStamped()
+        att_msg = PoseStamped()             # Create and send the orientation 
         att_msg.header.stamp = stamp
         att_msg.header.frame_id = 'map'
         att_msg.pose.orientation.x = q[0]
@@ -114,12 +114,12 @@ class DroneController(Node):
         att_msg.pose.orientation.z = q[2]
         att_msg.pose.orientation.w = q[3]
 
-        thr_msg = Thrust()
+        thr_msg = Thrust()                  # Create and send the thrust
         thr_msg.header.stamp = stamp
         thr_msg.thrust = self.target_thrust
 
-        self.att_pub.publish(att_msg)
-        self.thr_pub.publish(thr_msg)
+        self.att_pub.publish(att_msg)       # Send the orientation
+        self.thr_pub.publish(thr_msg)       # Send the thrust
 
     # Service helpers
     def arm(self): # yes
