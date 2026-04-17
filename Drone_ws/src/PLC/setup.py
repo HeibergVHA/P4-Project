@@ -28,6 +28,9 @@ setup(
         'tcp_node = PLC.Tcp_node:main',
         'process_node = PLC.process_node:main',
         'drone_cltside = PLC.Drone_Cltside:main',
+        'DroneController = PLC.DroneController:main',
+        'mission_planner_node = PLC.mission_planner_node:main',
+        'vicon_node = PLC.vicon_node:main',
         ],
     },
 )
