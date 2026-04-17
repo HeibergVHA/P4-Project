@@ -37,10 +37,13 @@ RUN apt update && apt install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # MAVROS + GeographicLib datasets
-RUN apt-get update && apt-get install -y \
-    ros-humble-mavros \
-    ros-humble-mavros-extras \
-    ros-humble-mavros-msgs \
+RUN rm -rf /var/lib/apt/lists/* && \
+    apt-get update -o Acquire::Retries=3 && \
+    apt-get install -y \
+        wget \
+        ros-humble-mavros \
+        ros-humble-mavros-extras \
+        ros-humble-mavros-msgs \
     && rm -rf /var/lib/apt/lists/*
 
 RUN /opt/ros/humble/lib/mavros/install_geographiclib_datasets.sh
