@@ -8,6 +8,9 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32, Float32MultiArray, MultiArrayDimension
 from std_srvs.srv import Trigger
+import zipfile
+import os
+import io
 
 
 class Drone_Cltside(Node):
@@ -21,14 +24,11 @@ class Drone_Cltside(Node):
     5. Publishes the received array and computed mean to ROS topics.
 
     Wire protocol - server to client (numpy frame):
-        [8 bytes] magic   b'NPARR\x00\x00\x00'
-        [1 byte]  dtype   e.g. b'f' = float32
-        [1 byte]  ndim    uint8
-        [ndim x 4 bytes]  shape: uint32 LE per dim
-        [N bytes] data    raw bytes
+        Unpsecified as of yet, but will contain commands
+        form of multiple {x,y,z} coordinates in a scan pattern
 
     Wire protocol - client to server (mean reply):
-        [4 bytes] float32 LE
+        [8 Bytes] - file size as uint64 LE
 
     Parameters:
         host (str) - server IP address  [default: '127.0.0.1']
@@ -39,37 +39,49 @@ class Drone_Cltside(Node):
         ~/mean  (std_msgs/Float32)           - computed mean sent back
 
     Services:
-        ~/connect    (std_srvs/Trigger) - (re)connect to the server
-        ~/disconnect (std_srvs/Trigger) - disconnect from the server
+        connect    (std_srvs/Trigger) - (re)connect to the server
+        disconnect (std_srvs/Trigger) - disconnect from the server
+        send   (std_srvs/Trigger) - zip and send the bag to the server
     """
 
-    MAGIC     = b'NPARR\x00\x00\x00'
-    MAGIC_LEN = 8
-    DTYPE_MAP = {
-        b'f': np.float32, b'd': np.float64,
-        b'i': np.int32,   b'l': np.int64,
-        b'B': np.uint8,
-    }
-
     def __init__(self):
+        """
+        
+        
+        
+        
+        """
         super().__init__('drone_Client_side')
 
         # parameters
-        self.declare_parameter('host', '10.42.0.1')
+        self.declare_parameter('host', '0.0.0.0')
         self.declare_parameter('port', 12347)
+        self.declare_parameter('bag_path', '/ros2_ws/bags/scan_20240617_153000') # default bag path, can be overridden by parameter
 
         # state
         self._sock: socket.socket | None = None
         self._connected = False
         self._lock = threading.Lock()
-
-        # publishers
-        self._array_pub = self.create_publisher(Float32MultiArray, '~/array', 10)
-        self._mean_pub  = self.create_publisher(Float32,           '~/mean',  10)
+        self.bag_name = None
 
         # services
-        self.create_service(Trigger, '~/connect',    self._cb_connect)
-        self.create_service(Trigger, '~/disconnect', self._cb_disconnect)
+        self.create_service(
+            Trigger, 
+            'connect',
+            self._cb_connect
+        )
+        
+        self.create_service(
+            Trigger, 
+            'disconnect', 
+            self._cb_disconnect
+        )
+        
+        self.create_service(
+            Trigger,
+            'send',
+            self._cb_send
+        )
 
         # connect on startup
         self._connect()
@@ -84,13 +96,13 @@ class Drone_Cltside(Node):
             return False, 'Already connected.'
 
         try:
-            sock = socket.socket() # socket.AF_INET, socket.SOCK_STREAM
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # socket.AF_INET, socket.SOCK_STREAM
+            self.get_logger().info(f'Attempting to connect {host}:{port}...')
             sock.connect((host, port))
             with self._lock:
                 self._sock      = sock
                 self._connected = True
             self.get_logger().info(f'Connected to {host}:{port}')
-            threading.Thread(target=self._recv_loop, daemon=True).start()
             return True, f'Connected to {host}:{port}'
         except Exception as e:
             self.get_logger().error(f'Connection failed: {e}')
@@ -110,83 +122,116 @@ class Drone_Cltside(Node):
         self.get_logger().info('Disconnected.')
         return True, 'Disconnected.'
 
-    # receive loop
+    
+    # Bag sending
 
-    def _recv_exactly(self, n: int) -> bytes:
-        buf = b''
-        while len(buf) < n:
-            chunk = self._sock.recv(n - len(buf))
-            if not chunk:
-                raise ConnectionError('Server closed the connection.')
-            buf += chunk
-        return buf
+    def _zip_bag(self, bag_path: str, zip_path: str) -> bytes:
+        """
+        Zips the entire rosbag directory into a file on disk rather than into ram
 
-    def _read_frame(self) -> np.ndarray:
-        magic = self._recv_exactly(self.MAGIC_LEN)
-        if magic != self.MAGIC:
-            raise ValueError(f'Bad magic: {magic!r}')
+        rosbag2 saves bags as a directory containing:
+          - scan_TIMESTAMP.db3      (the actual data)
+          - metadata.yaml           (topic info, timestamps etc.)
 
-        dtype_char = self._recv_exactly(1)
-        dtype = self.DTYPE_MAP.get(dtype_char)
-        if dtype is None:
-            raise ValueError(f'Unknown dtype: {dtype_char!r}')
+        We zip the whole directory so both files travel together and the
+        server can unzip and play it back directly with ros2 bag play.
 
-        ndim  = struct.unpack('B', self._recv_exactly(1))[0]
-        shape = struct.unpack(f'<{ndim}I', self._recv_exactly(ndim * 4))
+        Returns the raw bytes of the zip file.
+        """
+    
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # os.walk() traverses the directory tree
+            # root  = current directory path
+            # dirs  = subdirectory names in root
+            # files = file names in root
+            for root, dirs, files in os.walk(bag_path):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    # arcname is the path stored inside the zip
+                    # we make it relative so it unzips cleanly
+                    arcname = os.path.relpath(full_path, os.path.dirname(bag_path))
+                    zf.write(full_path, arcname)
+                    self.get_logger().info(f'Zipping: {arcname}')
 
-        n_bytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
-        raw     = self._recv_exactly(n_bytes)
+    def _send_bag(self):
+        """
+        Protocol:
+          1. zip the bag directory into memory
+          2. send 8 bytes: the zip file size as uint64 little-endian
+             - this tells the server exactly how many bytes to read
+          3. send the zip bytes in 4096-byte chunks
+             - chunking prevents memory issues with large bags
+        """
+        if not self._connected:
+            return False, 'Not connected.'
 
-        return np.frombuffer(raw, dtype=dtype).reshape(shape)
+        bag_path = self.get_parameter('bag_path').get_parameter_value().string_value
 
-    def _recv_loop(self):
-        while self._connected:
-            try:
-                array = self._read_frame()
-                mean  = float(array.mean())
+        # Check the bag directory actually exists before trying to send
+        if not os.path.isdir(bag_path):
+            return False, f'Bag path does not exist: {bag_path}'
+        
+        #Write zip next to the bag directory.
+        zip_path = bag_path.rstrip('/') + '_transfer.zip'
 
-                # Send mean back
-                with self._lock:
-                    if self._connected and self._sock:
-                        self._sock.sendall(struct.pack('<f', mean))
+        try:
+            self.get_logger().info(f'Zipping bag: {bag_path} to {zip_path}...')
+            self._zip_bag(bag_path, zip_path)
 
-                self.get_logger().info(
-                    f'Received array  shape={array.shape}  '
-                    f'dtype={array.dtype}  mean={mean:.6f}  -> sent mean back'
-                )
-                self._publish_array(array)
-                self._publish_mean(mean)
+            zip_size = os.path.getsize(zip_path)
+            self.get_logger().info(f'Sending {zip_size} bytes to server...')
 
-            except ConnectionError as e:
-                self.get_logger().warn(str(e))
-                self._connected = False
-                break
-            except Exception as e:
-                if self._connected:
-                    self.get_logger().error(f'Receive error: {e}')
-                self._connected = False
-                break
+            with self._lock:
+                if not self._connected or self._sock is None:
+                    return False, 'Lost connection.'
 
-    # publish helpers
+                # First mesage is the size of the zip file, where the least significant byte is first (little-endian)
+                # '<Q' means: < = little-endian, Q = unsigned 64-bit integer
+                self._sock.sendall(struct.pack('<Q', zip_size))
 
-    def _publish_array(self, array: np.ndarray):
-        msg = Float32MultiArray()
-        for i, size in enumerate(array.shape):
-            dim        = MultiArrayDimension()
-            dim.label  = f'dim{i}'
-            dim.size   = size
-            dim.stride = int(np.prod(array.shape[i:]))
-            msg.layout.dim.append(dim)
-        msg.data = array.astype(np.float32).flatten().tolist()
-        self._array_pub.publish(msg)
+            # Step 2: send the zip data in 4096-byte chunks
+            # sending in chunks is safer than one giant sendall() apparently
+            # for large bags (hundreds of MB)
+            chunk_size = 4096
+            sent = 0
 
-    def _publish_mean(self, mean: float):
-        msg      = Float32()
-        msg.data = mean
-        self._mean_pub.publish(msg)
+            with open(zip_path, 'rb') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    with self._lock:
+                        self._sock.sendall(chunk)
+                    sent += len(chunk)
 
+                    if sent % (10 * 1024 * 1024) <chunk_size:  # Log every 10 MB sent
+                        pct = (sent / zip_size) * 100
+                        self.get_logger().info(f'Sent {pct:.1f}%')
+
+            self.get_logger().info(f'Bag sent successfully: {zip_size} bytes')
+            return True, f'Sent {sent} bytes'
+
+        except Exception as e:
+            self.get_logger().error(f'Send failed: {e}')
+            self._connected = False
+            return False, str(e)
+        finally:
+            # Clean up the zip file after sending
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+                self.get_logger().info(f'Removed temporary zip file: ')
+        
+    def _send_in_thread(self, response):
+        success, message = self._send_bag()
+        self.get_logger().info(f'Send result: {message}')
     # service callbacks
 
+    def _cb_send(self, _request, response):
+        threading.Thread(target=self._send_in_thread, args=(response,), daemon=True).start()
+        response.success = True
+        response.message = 'Send started in background'
+        return response
+    
     def _cb_connect(self, _request, response):
         response.success, response.message = self._connect()
         return response
@@ -194,6 +239,7 @@ class Drone_Cltside(Node):
     def _cb_disconnect(self, _request, response):
         response.success, response.message = self._disconnect()
         return response
+
 
     def destroy_node(self):
         self._disconnect()

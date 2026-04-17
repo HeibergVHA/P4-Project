@@ -1,0 +1,5 @@
+repositories:
+  livox_ros2_driver:
+    type: git
+    url: https://github.com/HeibergVHA/livox_ros2_driver.git
+    version: master

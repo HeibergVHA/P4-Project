@@ -1,8 +1,10 @@
 FROM osrf/ros:humble-desktop-full
+SHELL ["/bin/bash", "-c"]
+
 RUN apt update && apt install -y \
     build-essential cmake git wget curl nano vim \
     python3-pip python3-colcon-common-extensions \
-    python3-rosdep python3-vcstool \
+    python3-vcstool \
     && rm -rf /var/lib/apt/lists/*
 
 RUN apt update && apt install -y \
@@ -16,20 +18,12 @@ RUN apt update && apt install -y \
     mesa-utils x11-apps ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-# Build livox_ros2_driver (Avia-compatible) + FAST-LIO in two steps
-RUN /bin/bash -c "\
+RUN /bin/bash -c " \
     source /opt/ros/humble/setup.bash && \
-    mkdir -p /ros2_ws/src && \
-    cd /ros2_ws/src && \
-    git clone https://github.com/Livox-SDK/livox_ros2_driver.git --depth 1 && \
-    git clone https://github.com/Ericsii/FAST_LIO_ROS2.git --branch ros2 --recursive && \
-    cd /ros2_ws/src/FAST_LIO_ROS2 && \
-    sed -i 's/livox_ros_driver2/livox_interfaces/g' \
-        CMakeLists.txt \
-        package.xml \
-        src/preprocess.h \
-        src/laserMapping.cpp \
-        src/preprocess.cpp && \
+    mkdir -p /ros2_ws/deps && \
+    cd /ros2_ws/deps && \
+    git clone https://github.com/HeibergVHA/livox_ros2_driver.git --depth 1 && \
+    git clone https://github.com/HeibergVHA/FAST_LIO_ROS2.git --branch ros2 --recursive && \
     cd /ros2_ws && \
     colcon build --packages-select livox_sdk_vendor \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -46,6 +40,7 @@ RUN /bin/bash -c "\
     colcon build --packages-select fast_lio \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
         --event-handlers console_cohesion+"
+
 ENV DISPLAY=:0
 ENV QT_X11_NO_MITSHM=1
 ENV ROS_DOMAIN_ID=7
@@ -55,3 +50,4 @@ RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
     echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
 
 WORKDIR /ros2_ws
+CMD ["bash"]

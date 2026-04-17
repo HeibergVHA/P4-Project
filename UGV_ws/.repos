@@ -1,0 +1,15 @@
+repositories:
+  livox_ros2_driver:
+    type: git
+    url: https://github.com/HeibergVHA/livox_ros2_driver.git
+    version: master
+
+  FAST_LIO:
+    type: git
+    url: https://github.com/HeibergVHA/FAST_LIO_ROS2.git
+    version: ros2
+
+  ikdTree:
+    type: git
+    url: https://github.com/hku-mars/ikd-Tree.git
+    version: fast_lio

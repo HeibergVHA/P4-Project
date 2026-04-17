@@ -199,6 +199,11 @@ qtcreator-*
 # Emacs
 .#*
 
+#ros2 bags files
+*.bag
+__pycache__/
+*.pyc
+
 # Colcon custom files
 COLCON_IGNORE
 AMENT_IGNORE

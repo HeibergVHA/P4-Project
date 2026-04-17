@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'PLC'
+package_name = 'UGV_SvrSide'
 
 setup(
     name=package_name,

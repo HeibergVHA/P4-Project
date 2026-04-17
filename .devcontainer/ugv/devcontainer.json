@@ -1,0 +1,38 @@
+{
+    "name": "UGV ROS2",
+    "dockerFile": "${localWorkspaceFolder}/UGV_ws/dockerfile",
+    "context": "${localWorkspaceFolder}/UGV_ws",
+    "runArgs": [
+        "--network=host",
+        "--privileged",
+        "-e", "DISPLAY=${localEnv:DISPLAY}",
+        "-v", "/tmp/.X11-unix:/tmp/.X11-unix"
+    ],
+    "mounts": [
+        "source=${localWorkspaceFolder}/UGV_ws/src,target=/ros2_ws/src,type=bind"
+        // "source=${localWorkspaceFolder}/UGV_ws/build,target=/ros2_ws/build,type=bind",
+        // "source=${localWorkspaceFolder}/UGV_ws/install,target=/ros2_ws/install,type=bind",
+        // "source=${localWorkspaceFolder}/UGV_ws/log,target=/ros2_ws/log,type=bind"
+    ],
+    "workspaceFolder": "/ros2_ws",
+    "remoteEnv": {
+        "PYTHONPATH": "/ros2_ws/install/livox_interfaces/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-vscode.cpptools",
+                "twxs.cmake",
+                "ms-python.pylance"
+            ],
+            "settings": {
+                "python.analysis.extraPaths": [
+                    "/ros2_ws/install/livox_interfaces/local/lib/python3.10/dist-packages",
+                    "/opt/ros/humble/lib/python3.10/site-packages",
+                    "/opt/ros/humble/local/lib/python3.10/dist-packages"
+                ]
+            }
+        }
+    }
+}
