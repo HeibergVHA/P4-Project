@@ -105,6 +105,10 @@ RUN apt update && apt install -y \
     python3-pandas python3-future python3-serial python3-scipy \
     && rm -rf /var/lib/apt/lists/*
 
+RUN apt update && apt install -y \
+    python3-numpy \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN /bin/bash -c " \
     source /opt/ros/humble/setup.bash && \
     mkdir -p /ros2_ws/deps && \
