@@ -68,11 +68,11 @@ class RadioNode(Node):
             msg.data = packet.get('status', '')
             self.command_pub.publish(msg)
             self.get_logger().info(f'UAV status: {msg.data}')
-        if msg_type == 'UAVPosition':
+        if msg_type == 'drone_position':
             stamp = self.get_clock().now().to_msg()
             msg = PoseStamped()             # Create and send the orientation 
             msg.header.stamp = stamp
-            msg.header.frame_id = 'Position'
+            msg.header.frame_id = 'UAVPosition'
             msg.pose.position.x = packet.get('x', 0.0)
             msg.pose.position.y = packet.get('y', 0.0)
             msg.pose.position.z = packet.get('z', 0.0)

@@ -17,7 +17,7 @@ class RadioNode(Node):
         self.radio = serial.Serial('/dev/ttyUSB0', baudrate=57600, timeout=1.0) # Should be correct USB port ###########################
 
         # Subscribers
-        self.create_subscription(PoseStamped, '/mavros/local_position/pose', self.position_callback, 10)
+        self.create_subscription(PoseStamped, '/mavros/local_position/pose', self.position_callback, 1)
 
         self.create_subscription(String, 'uav/radio_out/mission_status', self.status_callback, 10)
 
