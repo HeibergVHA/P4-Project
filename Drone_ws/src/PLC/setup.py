@@ -31,6 +31,7 @@ setup(
         'DroneController = PLC.DroneController:main',
         'mission_planner_node = PLC.mission_planner_node:main',
         'vicon_node = PLC.vicon_node:main',
+        'radio_node = PLC.radio_node:main',
         ],
     },
 )
