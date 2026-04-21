@@ -354,7 +354,7 @@ class DroneController(Node):
                 PoseStamped, 'vicon_pose', self.vicon_pos_callback, 10)
             
         self.target_pos_sub = self.create_subscription(         # Target position topic.
-            PoseStamped, 'target_pos', self.target_pos_callback, 10)
+            PoseStamped, 'uav/target_pos', self.target_pos_callback, 10)
 
         # Publishers 
         self.att_pub = self.create_publisher(                   # Control drone orientation (attitude) mavros topic.
