@@ -22,10 +22,10 @@ class MissionPlanner(Node):
             self.vicon_pos_sub = self.create_subscription(      # Vicon topic.
                 PoseStamped, 'vicon_pose', self.vicon_pos_callback, 10)
 
-        self.create_subscription(String, 'target_waypoint', self.target_waypoint_callback, 10)
+        self.create_subscription(String, 'uav/radio_in/target_waypoint', self.target_waypoint_callback, 10)
             
         self.target_pos_pub = self.create_publisher(         # Target position topic.
-            PoseStamped, 'target_pos', 10)
+            PoseStamped, 'uav/target_pos', 10)
         
 
         # Current postition
@@ -34,9 +34,13 @@ class MissionPlanner(Node):
         self.current_z = 0.0
 
         # Target position
-        self.target_x = 0.0             # Meters
+        self.target_x = 0.0
         self.target_y = 0.0
         self.target_z = 0.0
+        self.target_qw = 0.0
+        self.target_qx = 0.0
+        self.target_qy = 0.0
+        self.target_qz = 0.0
 
         self.timer = self.create_timer(0.02, self.control_loop) # 0.02 sek = 50 Hz
 
@@ -53,7 +57,7 @@ class MissionPlanner(Node):
         self.current_z = msg.pose.position.z
     
     def target_waypoint_callback(self, msg):
-        x = 1
+        x = 123
         # Waypoints.append(msg) # Or something like that.
     
     def control_loop(self): # Control loop at or around 50 Hz. Does not strictly need to be 50 Hz, just need a new position before the old is reached.
@@ -67,14 +71,18 @@ class MissionPlanner(Node):
         # self.target_y = 0.0
         # self.target_z = 0.0
 
-        att_msg = PoseStamped()             # Create and send the orientation 
-        att_msg.header.stamp = stamp
-        att_msg.header.frame_id = 'targetPos'
-        att_msg.pose.position.x = self.target_x
-        att_msg.pose.position.y = self.target_y
-        att_msg.pose.position.z = self.target_z
+        msg = PoseStamped()             # Create and send 
+        msg.header.stamp = stamp
+        msg.header.frame_id = 'targetPos'
+        msg.pose.position.x = self.target_x
+        msg.pose.position.y = self.target_y
+        msg.pose.position.z = self.target_z
+        msg.pose.orientation.w = self.target_qw
+        msg.pose.orientation.x = self.target_qx
+        msg.pose.orientation.y = self.target_qy
+        msg.pose.orientation.z = self.target_qz
 
-        self.target_pos_pub.publish(att_msg)       # Send the orientation
+        self.target_pos_pub.publish(msg)       # Send
 
 
 def main(args=None):
