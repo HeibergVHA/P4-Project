@@ -16,6 +16,7 @@ RUN apt update && apt install -y \
 RUN apt update && apt install -y \
     ros-humble-rviz2 libgl1-mesa-glx libgl1-mesa-dri \
     mesa-utils x11-apps ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-pcl-conversions ros-humble-pcl-msgs \
     && rm -rf /var/lib/apt/lists/*
 
     # Python dependencies for LidarCostmapGenerator 
