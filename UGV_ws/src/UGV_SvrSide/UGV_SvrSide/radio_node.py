@@ -15,9 +15,9 @@ class RadioNode(Node):
         # Serial to 433 MHz telemetry radio
         self.radio = serial.Serial('/dev/ttyUSB0', baudrate=57600, timeout=1.0) # Find correct USB port. ######################################
 
-        self.create_subscription(dict, 'ugv/radio_out/target_waypoint', self.target_waypoint_callback, 10)
+        self.create_subscription(String, 'ugv/radio_out/target_waypoint', self.target_waypoint_callback, 10)
 
-        self.create_subscription(dict, 'ugv/radio_out/mission_command', self.mission_command_callback, 10)
+        self.create_subscription(String, 'ugv/radio_out/mission_command', self.mission_command_callback, 10)
 
         self.uav_pos_pub = self.create_publisher(PoseStamped, 'ugv/radio_in/uav_pos', 10)
 
@@ -30,7 +30,10 @@ class RadioNode(Node):
 
     # callbacks
     def target_waypoint_callback(self, msg):
-        self.send(msg)
+        try:
+            self.radio.write(msg)
+        except serial.SerialException as e:
+            self.get_logger().warn(f'Radio write failed: {e}')
 
     def mission_command_callback(self, msg):
         packet = {
@@ -40,7 +43,7 @@ class RadioNode(Node):
         self.send(packet)
 
 
-    def send(self, packet: dict):
+    def send(self, packet):
         try:
             line = (json.dumps(packet) + '\n').encode()
             self.radio.write(line)
@@ -60,7 +63,7 @@ class RadioNode(Node):
             except serial.SerialException as e:
                 self.get_logger().warn(f'Radio read failed: {e}')
 
-    def handle_incoming(self, packet: dict):
+    def handle_incoming(self, packet):
         msg_type = packet.get('type')
 
         if msg_type == 'status':
