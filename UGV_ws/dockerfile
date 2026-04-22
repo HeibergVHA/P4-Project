@@ -13,12 +13,6 @@ RUN apt update && apt install -y \
     libgflags-dev libboost-all-dev libpcl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN apt update && apt install -y \
-    ros-humble-rviz2 libgl1-mesa-glx libgl1-mesa-dri \
-    mesa-utils x11-apps ros-humble-rmw-cyclonedds-cpp \
-    ros-humble-pcl-conversions ros-humble-pcl-msgs \
-    && rm -rf /var/lib/apt/lists/*
-
     # Python dependencies for LidarCostmapGenerator 
 RUN apt update && apt install -y \
     python3-numpy \
@@ -27,6 +21,15 @@ RUN apt update && apt install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install "numpy<2" open3d scikit-learn 
+
+RUN apt update && apt install -y \
+    ros-humble-rviz2 libgl1-mesa-glx libgl1-mesa-dri \
+    mesa-utils x11-apps ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-pcl-conversions ros-humble-pcl-msgs \
+    ros-humble-pcl-ros \
+    && rm -rf /var/lib/apt/lists/*
+
+
 
 
 # Build livox_ros2_driver (Avia-compatible) + FAST-LIO in two steps
