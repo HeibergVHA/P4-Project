@@ -54,8 +54,9 @@ class UGV_SvrSide(Node):
         self._lock       = threading.Lock()
 
         # service
-        self.create_service(Trigger, 'disconnect', self._cb_disconnect)
+        self.create_service(Trigger, '/disconnect', self._cb_disconnect)
 
+        self.start_reading_client = self.create_client(Trigger, '/start_reading')
         # start listening in background
         threading.Thread(target=self._listen_loop, daemon=True).start()
 
@@ -166,12 +167,13 @@ class UGV_SvrSide(Node):
                         pct = (received / zip_size) * 100
                         self.get_logger().info(f'Received {pct:.1f}%')
             
-            self.get_logger().info('Transfer complete: {received} bytes')
+            self.get_logger().info(f'Transfer complete: {received} bytes')
             self.get_logger().info('Unzipping ...')
 
             # ---> Step 3 <--- #
             
             self._unzip_file(zip_path, save_path)
+            self.trigger_start_reading() # Trigger start reading after successful transfer and unzip
 
         # If connection error occurs, log and drop client
         except ConnectionError as e:
@@ -238,6 +240,18 @@ class UGV_SvrSide(Node):
         except Exception:
             pass
         super().destroy_node()
+
+    def trigger_start_reading(self):
+        request = Trigger.Request()
+        future = self.start_reading_client.call_async(request)
+        future.add_done_callback(self.start_reading_response_cb)
+    
+    def start_reading_response_cb(self, future):
+        result = future.result()
+        if result.success:
+            self.get_logger().info(f'Start reading: {result.message}')
+        else:
+            self.get_logger().error(f'Failed to start reading: {result.message}')
 
 
 def main(args=None):

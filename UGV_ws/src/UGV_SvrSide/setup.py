@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'UGV_SvrSide'
 
@@ -11,6 +13,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/UGV_SvrSide/', ['UGV_SvrSide/procssing_times_table.csv']),
+        (os.path.join('share', package_name, 'launch'),
+         glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -27,7 +31,8 @@ setup(
         'console_scripts': [
         'tcp_node = UGV_SvrSide.Tcp_node:main',
         'process_node = UGV_SvrSide.process_node:main',
-        'ugv_svrside = UGV_SvrSide.UGV_SvrSide:main'
+        'ugv_svrside = UGV_SvrSide.UGV_SvrSide:main',
+        'livox_bag_reader = UGV_SvrSide.LivoxBagReader:main'
         ],
     },
 )

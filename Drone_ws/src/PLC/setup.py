@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'PLC'
 
@@ -11,6 +13,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/PLC/', ['PLC/procssing_times_table.csv']),
+        (os.path.join('share', package_name, 'launch'),
+         glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -31,6 +35,7 @@ setup(
         'DroneController = PLC.DroneController:main',
         'mission_planner_node = PLC.mission_planner_node:main',
         'vicon_node = PLC.vicon_node:main',
+        'Lidar_collection = PLC.LidarCollection:main',
         ],
     },
 )

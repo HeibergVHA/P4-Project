@@ -67,23 +67,25 @@ class Drone_Cltside(Node):
         # services
         self.create_service(
             Trigger, 
-            'connect',
+            '/connect',
             self._cb_connect
         )
         
         self.create_service(
             Trigger, 
-            'disconnect', 
+            '/disconnect', 
             self._cb_disconnect
         )
         
         self.create_service(
             Trigger,
-            'send',
+            '/send',
             self._cb_send
         )
 
+        self.start_recording_client = self.create_client(Trigger, '/start_recording')
         # connect on startup
+        self.stop_recording_client = self.create_client(Trigger,'/stop_recording')
         self._connect()
 
     # connection helpers
@@ -103,6 +105,7 @@ class Drone_Cltside(Node):
                 self._sock      = sock
                 self._connected = True
             self.get_logger().info(f'Connected to {host}:{port}')
+            self.trigger_start_recording()
             return True, f'Connected to {host}:{port}'
         except Exception as e:
             self.get_logger().error(f'Connection failed: {e}')
@@ -165,8 +168,7 @@ class Drone_Cltside(Node):
         if not self._connected:
             return False, 'Not connected.'
 
-        bag_path = self.get_parameter('bag_path').get_parameter_value().string_value
-
+        bag_path = self.bag_name
         # Check the bag directory actually exists before trying to send
         if not os.path.isdir(bag_path):
             return False, f'Bag path does not exist: {bag_path}'
@@ -245,6 +247,32 @@ class Drone_Cltside(Node):
         self._disconnect()
         super().destroy_node()
 
+    def trigger_start_recording(self):
+        request = Trigger.Request()
+        future = self.start_recording_client.call_async(request)
+        future.add_done_callback(self.start_recording_response_cb)
+
+    def start_recording_response_cb(self, future):
+        result = future.result()
+        if result.success:
+            self.get_logger().info(f'Start recording triggered successfully: {result.message}')
+            self.bag_name = result.message
+            self.recording_timer = self.create_timer(20.0, self.trigger_stop_recording)
+        else:
+            self.get_logger().error(f'Failed to trigger start recording: {result.message}')
+
+    def trigger_stop_recording(self):
+        self.recording_timer.cancel()
+        request = Trigger.Request()
+        future = self.stop_recording_client.call_async(request)
+        future.add_done_callback(self.stop_recording_response_cb)
+
+    def stop_recording_response_cb(self, future):
+        result = future.result()
+        if result.success:
+            self.get_logger().info(f'Stop recording triggered successfully: {result.message}')
+        else:
+            self.get_logger().error(f'Failed to trigger stop recording: {result.message}')
 
 def main(args=None):
     rclpy.init(args=args)

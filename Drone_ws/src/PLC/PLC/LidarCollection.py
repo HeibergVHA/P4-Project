@@ -18,13 +18,13 @@ class LivoxBagRecorder(Node):
 
         self.start_srv = self.create_service(
             Trigger,
-            'start_recording',
+            '/start_recording',
             self.start_callback
         )
 
         self.stop_srv = self.create_service(
             Trigger,
-            'stop_recording',
+            '/stop_recording',
             self.stop_callback
         )
 
@@ -41,6 +41,10 @@ class LivoxBagRecorder(Node):
             self.imu_callback,
             10
         )
+        self._pending_send = False
+        self.create_timer(1.0, self._check_send)
+
+        self.send_client = self.create_client(Trigger, '/send')
     def start_callback(self, request, response):
         if self.recording:
             response.success = False
@@ -66,14 +70,14 @@ class LivoxBagRecorder(Node):
     
         imu_topic = rosbag2_py.TopicMetadata(
             name='/livox/imu',
-            type='std_msgs/msg/Imu',
+            type='sensor_msgs/msg/Imu',
             serialization_format='cdr')
         self.writer.create_topic(imu_topic)
 
         self.recording = True
         self.get_logger().info(f'Recording started: {self.bag_name}')
         response.success = True
-        response.message = f'Recording to {self.bag_name}'
+        response.message = f'{self.bag_name}'
         return response
 
     def stop_callback(self, request, response):
@@ -84,9 +88,11 @@ class LivoxBagRecorder(Node):
         self.writer = None
         self.recording = False
         self.get_logger().info(f'Recording stopped: {self.bag_name}')
+        self.pending_send = True
         response.success = True
-        response.message = f'Saved to {self.bag_name}'
-
+        response.message = f'{self.bag_name}'
+        return response
+    
     def lidar_callback(self, msg):
         if self.recording and self.writer:
             self.writer.write(
@@ -100,6 +106,23 @@ class LivoxBagRecorder(Node):
                 '/livox/imu',
                 serialize_message(msg),
                 self.get_clock().now().nanoseconds)
+            
+    def trigger_send(self):
+        request = Trigger.Request()
+        future = self.send_client.call_async(request)
+        future.add_done_callback(self.send_response_cb)
+    
+    def send_response_cb(self, future):
+        result = future.result()
+        if result.success:
+            self.get_logger().info('send triggered successfully')
+        else:
+            self.get_logger().error(f'Failed to trigger send: {result.message}')
+    
+    def _check_send(self):
+        if self._pending_send:
+            self._pending_send = False
+            self.trigger_send()
 
 
 def main(args=None):

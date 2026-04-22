@@ -1,0 +1,52 @@
+import launch
+from launch import LaunchDescription
+from launch.actions import TimerAction, ExecuteProcess, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
+import os
+
+def generate_launch_description():
+
+    livox_driver = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('livox_ros2_driver'),
+                'launch',
+                'livox_lidar_msg_launch.py'
+            )
+        )
+    )
+
+    lidar_collection = Node(
+        package='PLC',
+        executable='Lidar_collection',
+        name='lidar_collection',
+        output='screen'
+    )
+
+    drone_cltside = Node(
+        package='PLC',
+        executable='drone_cltside',
+        name='drone_cltside',
+        output='screen'
+    )
+
+    #Give stop recording some time to finish before sending the rosbag
+    send_bag = TimerAction(
+        period=30.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['ros2', 'service', 'call', '/send', 'std_srvs/srv/Trigger', '{}'],
+                output='screen'
+            )
+        ]
+    )
+
+    return LaunchDescription([
+        livox_driver,
+        lidar_collection,
+        drone_cltside,
+        send_bag
+    ])
+

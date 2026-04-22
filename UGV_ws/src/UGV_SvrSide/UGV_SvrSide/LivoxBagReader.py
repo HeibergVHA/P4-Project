@@ -6,101 +6,108 @@ from std_srvs.srv import Trigger
 import datetime
 import rosbag2_py
 from rclpy.serialization import deserialize_message
+import os
+import subprocess
+import time
 
 class LivoxBagReader(Node):
     def __init__(self):
         super().__init__('livox_bag_reader')
-        self.reader = None
-        self.reading = False
-        self.bag_name = None
-        self.read_timer = None
+        self.bag_process = None
+        self.fastlio_process = None
 
         self.start_srv = self.create_service(
             Trigger,
-            'start_reading',
+            '/start_reading',
             self.start_callback
         )
 
         self.stop_srv = self.create_service(
             Trigger,
-            'stop_reading',
+            '/stop_reading',
             self.stop_callback
         )
-        self.lidar_pub = self.create_publisher(
-            CustomMsg,
-            '/livox/lidar',
-            10
-        )
-        self.imu_pub = self.create_publisher(
-            Imu,
-            '/livox/imu',
-            10
-        )
 
+
+    def get_latest_bag(self):
+        bags_dir = "/ros2_ws/bags"
+
+        # Get all subdirectories
+        subdirs = [
+            os.path.join(bags_dir, d)
+            for d in os.listdir(bags_dir)
+            if os.path.isdir(os.path.join(bags_dir, d))
+        ]
+        if not subdirs:
+            raise RuntimeError(f'No bag folders found')
+        return max(subdirs, key=os.path.getmtime)
+    
     def start_callback(self, request, response):
-        if self.reading:
+        if self.bag_process:
             response.success = False
             response.message = 'Already Recording..'
             return response
 
-        self.reader = rosbag2_py.SequentialReader()
-        self.bag_name = '/ros2_ws/bags/latest_scan'
-
-        storage_options = rosbag2_py.StorageOptions(
-            uri = self.bag_name,
-            storage_id='sqlite3'
+        try:
+            bag_name = self.get_latest_bag()
+        except RuntimeError as e:
+            response.success = False
+            response.message = str(e)
+            return response
+        
+        # Launch FastLio mapping
+        self.fastlio_process = subprocess.Popen(
+            ['ros2', 'launch', 'fast_lio', 'mapping.launch.py', 'config_file:=avia.yaml', 'rviz:=false', 'use_sim_time:=true'],
         )
-        converter_options = rosbag2_py.ConverterOptions('','')
-        self.reader.open(storage_options, converter_options)
+        self.get_logger().info('Launched FAST-LIO mapping.launch.py')
 
-        self.reading = True
-        self.read_timer = self.create_timer(0.01, self.read_next_message)
-        self.get_logger().info(f'Reading started: {self.bag_name}')
+        # Following starts the reading loop after delay.
+        self.bag_name = bag_name
+        self.read_timer = self.create_timer(5.0, self._start_bag_play)
+
         response.success = True
         response.message = f'Reading {self.bag_name}'
         return response
 
+    def _start_bag_play(self):
+        self.read_timer.cancel()
+
+        self.get_logger().info(f'playing: {self.bag_name}')
+
+        self.bag_process = subprocess.Popen(
+            ['ros2', 'bag', 'play', self.bag_name, '--clock'],
+        )
+
+        self.poll_timer = self.create_timer(1.0, self._check_bag_finished)
+
+    def _check_bag_finished(self):
+        if self.bag_process and self.bag_process.poll() is not None:
+            self.poll_timer.cancel()
+            self.get_logger().info('Bag play finished')
+            self._shutdown_processes()
+    
+    def _shutdown_processes(self):
+        if self.bag_process:
+            self.bag_process.terminate()
+            self.bag_process = None
+            self.get_logger().info('Terminated bag play process')
+        if self.fastlio_process:
+            self.fastlio_process.terminate()
+            self.fastlio_process = None
+            self.get_logger().info('Terminated FAST-LIO process')
+    
     def stop_callback(self, request, response):
-        if not self.reading:
+        if not self.bag_process:
             response.success = False
             response.message = 'Not reading..'
             return response
-        
-        self.reading = False
-        self.reader = None
-
-        # Stop the timer if its running
-        if self.read_timer:
-            self.read_timer.cancel()
-            self.read_timer = None
+        self._shutdown_processes()
 
         self.get_logger().info(f'Reading stopped: {self.bag_name}')
         response.success = True
         response.message = f'Stopped reading {self.bag_name}'
         return response
         
-    def read_next_message(self):
-        if not self.reading or self.reader is None:
-            return
-        
-        if self.reader.has_next():
-            topic, data, timestamp = self.reader.read_next()
-
-            if topic == '/livox/lidar':
-                msg = deserialize_message(data, CustomMsg)
-                self.lidar_pub.publish(msg)
-            elif topic == '/livox/imu':
-                msg = deserialize_message(data, Imu)
-                self.imu_pub.publish(msg)
-        else:
-            # Bag finished reading
-            self.get_logger().info('Bag finished')
-            self.reading = False
-            self.reader = None
-            if self.read_timer:
-                self.read_timer.cancel()
-                self.read_timer = None
-
 def main(args=None):
     rclpy.init(args=args)
     node = LivoxBagReader()
