@@ -18,7 +18,18 @@ RUN apt update && apt install -y \
     mesa-utils x11-apps ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-RUN /bin/bash -c " \
+    # Python dependencies for LidarCostmapGenerator 
+RUN apt update && apt install -y \
+    python3-numpy \
+    python3-scipy \
+    python3-opencv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install "numpy<2" open3d scikit-learn 
+
+
+# Build livox_ros2_driver (Avia-compatible) + FAST-LIO in two steps
+RUN /bin/bash -c "\
     source /opt/ros/humble/setup.bash && \
     mkdir -p /ros2_ws/deps && \
     cd /ros2_ws/deps && \
