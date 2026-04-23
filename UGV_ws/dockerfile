@@ -18,6 +18,7 @@ RUN apt update && apt install -y \
     python3-numpy \
     python3-scipy \
     python3-opencv \
+    python3-serial \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install "numpy<2" open3d scikit-learn 
@@ -60,6 +61,8 @@ ENV DISPLAY=:0
 ENV QT_X11_NO_MITSHM=1
 ENV ROS_DOMAIN_ID=7
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+COPY cyclonedds.xml /root/cyclonedds.xml
+ENV CYCLONEDDS_URI=file:///root/cyclonedds.xml
 
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
     echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc

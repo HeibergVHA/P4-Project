@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped # 'Pose' data type.
 from mavros_msgs.msg import State, Thrust
 from mavros_msgs.srv import CommandBool, SetMode
@@ -341,13 +342,15 @@ class DroneController(Node):
         source = self.get_parameter('input_source').value       # "vicon" to get current position from "vicon_posee" topic.
         self.get_logger().info(f"Using input source: {source}") # I think like this: "ros2 run pakage node --ros-args -p input_source:=vicon"
 
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+
         # Subscribers
         self.state_sub = self.create_subscription(              # Info about if the drone is connected, armed, and state.
             State, '/mavros/state', self.state_callback, 10)
         
         if source == 'local':
             self.local_pos_sub = self.create_subscription(      # Local position. ArduPilot EKF position.
-                PoseStamped, '/mavros/local_position/pose', self.local_pos_callback, 10)
+                PoseStamped, '/mavros/local_position/pose', self.local_pos_callback, qos)
             
         if source == 'vicon':
             self.vicon_pos_sub = self.create_subscription(      # Vicon topic.
