@@ -51,6 +51,7 @@ data = np.load("path/to/costmap_<timestamp>.npy")
 
 
 # Below is the Arciteecture of the code 
+```
 ┌─────────────┐
 │   PCD File  │
 └──────┬──────┘
@@ -74,19 +75,20 @@ data = np.load("path/to/costmap_<timestamp>.npy")
 │                     - min_filter(elevation) │
 └──────┬──────────────────────────────────────┘
        │
-       ├─────────────────────┬────────────────────────┐
-       ▼                     ▼                        ▼
-┌─────────────┐   ┌──────────────────────┐   ┌──────────────────┐
-│Static Layer │   │  Inflation Layer     │   │  Master Layer    │
-│             │   │                      │   │                  │
-│ free   = 10 │   │ OpenCV dilation of   │   │ element-wise     │
-│ caution= 50 │   │ lethal cells         │   │ max(static,      │
-│ lethal = 100│   │ buffer cost = 90     │   │     inflation)   │
-│ unknown= -1 │   │                      │   │                  │
-└──────┬──────┘   └──────────┬───────────┘   └────────┬─────────┘
-       │                     │                        │
-       ▼                     ▼                        ▼
-/static_costmap    /inflation_costmap         /master_costmap
+       ├──────────────────────┬──────────────────────┐
+       ▼                      ▼                      ▼
+┌──────────────┐   ┌─────────────────────┐   ┌──────────────────┐
+│ Static Layer │   │  Inflation Layer    │   │  Master Layer    │
+│              │   │                     │   │                  │
+│ free    = 10 │   │ OpenCV dilation of  │   │ element-wise     │
+│ caution = 50 │   │ lethal cells        │   │ max(static,      │
+│ lethal  = 100│   │ buffer cost = 90    │   │     inflation)   │
+│ unknown = -1 │   │                     │   │                  │
+└──────┬───────┘   └──────────┬──────────┘   └────────┬─────────┘
+       │                      │                       │
+       ▼                      ▼                       ▼
+/static_costmap     /inflation_costmap        /master_costmap
                                                       │
                                                       ▼
                                              costmap_<timestamp>.npy
+```
