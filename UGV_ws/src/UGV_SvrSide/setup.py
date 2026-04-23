@@ -32,7 +32,7 @@ setup(
         'tcp_node = UGV_SvrSide.Tcp_node:main',
         'process_node = UGV_SvrSide.process_node:main',
         'ugv_svrside = UGV_SvrSide.UGV_SvrSide:main',
-        'livox_bag_reader = UGV_SvrSide.LivoxBagReader:main'
+        'livox_bag_reader = UGV_SvrSide.LivoxBagReader:main',
         'radio_node = PLC.radio_node:main',
         ],
     },

@@ -40,6 +40,7 @@ class LivoxBagReader(Node):
         ]
         if not subdirs:
             raise RuntimeError(f'No bag folders found')
+        self.get_logger().info(f'founder rosbag {max(subdirs, key=os.path.getmtime)}')
         return max(subdirs, key=os.path.getmtime)
     
     def start_callback(self, request, response):
@@ -57,7 +58,7 @@ class LivoxBagReader(Node):
         
         # Launch FastLio mapping
         self.fastlio_process = subprocess.Popen(
-            ['ros2', 'launch', 'fast_lio', 'mapping.launch.py', 'config_file:=avia.yaml', 'rviz:=false', 'use_sim_time:=true'],
+            ['ros2', 'launch', 'fast_lio', 'mapping.launch.py', 'config_file:=avia.yaml'],
         )
         self.get_logger().info('Launched FAST-LIO mapping.launch.py')
 

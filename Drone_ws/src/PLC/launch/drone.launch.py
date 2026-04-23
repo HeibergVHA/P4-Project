@@ -44,7 +44,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        livox_driver,
         lidar_collection,
         drone_cltside,
         send_bag
