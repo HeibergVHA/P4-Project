@@ -1,9 +1,13 @@
 
 # To run the node 
+I used jazzy so it might not work on humble keep in mind.
 
-cd~UGV_ws
+cd~UGV_ws/src
+
 
 colcon build
+
+colcon build --packages-select threshold_interfaces
 
 source install/setup.bash
 
@@ -23,6 +27,8 @@ Run:      rviz2
 # The two Services: (it's own terminal)
 # For the Cost Map service use to create a new cost map: 
 
+source install/setup.bash
+
 ros2 service call /generate_costmap std_srvs/srv/Trigger "{}"
 
 # To show threshold interfaces use :
@@ -32,11 +38,12 @@ ros2 interface show threshold_interfaces/srv/SetThresholds
 # To Change the thresholds use the below command and change the values to your liking:
  Note:
  If u don't put in values for them they will defualt to 0.
- Also no restart needed you can change them live and they do have a defult in the code they use normaly. 
+ Also no restart needed you can change them live and they do have a defult in the code they use normally.
+ Make sure you generate a cost map with the other service after you make the changes.  
 
-ros2 service call /set_thresholds threshold_interfaces/srv/SetThresholds \
-"{flat_caution_threshold: 0.03, caution_obstacle_threshold: 0.08, map_resolution: 0.05, 
-inflation_radius_meters: 0.05, max_filter_size: 2, min_filter_size: 2}"
+source install/setup.bash
+
+ros2 service call /set_thresholds threshold_interfaces/srv/SetThresholds "{flat_caution_threshold: 0.03, caution_obstacle_threshold: 0.08, map_resolution: 0.05, inflation_radius_meters: 0.05, max_filter_size: 2, min_filter_size: 2}"
 
 
 # To load the numpy.py file output for the coordinates use:

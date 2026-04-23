@@ -100,7 +100,8 @@ class LidarCostmapGenerator(Node):
         response.message = "Thresholds updated"
         return response
 
-    # TF broadcaster for the static map frame
+    # TF broadcaster for the static map frame. 
+    # This allows RViz2 to visualize the costmaps in the correct coordinate frame.
     def _publish_map_frame(self):
         t = TransformStamped()
         t.header.stamp    = self.get_clock().now().to_msg()
@@ -121,6 +122,7 @@ class LidarCostmapGenerator(Node):
             points = np.asarray(pcd.points)
 
             # Rotate 90° around Y to align sensor frame → map frame
+            # You can change this rotation if your PCD is already in the correct orientation, or if it uses a different convention.
             theta = np.pi / 2
             R = np.array([
                 [ np.cos(theta), 0, np.sin(theta)],
@@ -204,7 +206,7 @@ class LidarCostmapGenerator(Node):
             f"unknown:{np.sum(static==-1)}"
         )
 
-        # Inflation layer — dilate obstacles, but only where we have data (don't inflate unknown) ──
+        # Inflation layer — dilate obstacles, but only where we have data (don't inflate unknown)
         obstacle_mask = (static == 100).astype(np.uint8) * 255
         # Inflation radius in cells, ensuring at least 1 cell of inflation for small radii.
         inflation_cells = max(1, int(self.inflation_radius_meters / self.costmap_resolution))
@@ -213,11 +215,12 @@ class LidarCostmapGenerator(Node):
         
         inflation = static.copy()   # int16 copy
 
-        # Buffer zone around obstacles marked as caution with a cost of 90, but only where we have data and it's not already an obstacle.
+        # Buffer zone around obstacles marked as caution with a cost of 90, 
+        # but only where we have data and it's not already an obstacle.
         buffer_zone = (inflated_mask > 0) & (static < 100) & (static >= 0)
         inflation[buffer_zone] = np.maximum(inflation[buffer_zone], 90)
 
-        # Master layer — element-wise max (int16, so -1 behaves correctly) ──
+        # Master layer — element-wise max (int16, so -1 behaves correctly) 
         # np.maximum(-1, 10) = 10  ✓   np.maximum(-1, -1) = -1  ✓
         master = np.maximum(static, inflation)
 
@@ -296,7 +299,7 @@ class LidarCostmapGenerator(Node):
 
     
 
-# Main entry point
+
 def main(args=None):
     rclpy.init(args=args)
     node = LidarCostmapGenerator()

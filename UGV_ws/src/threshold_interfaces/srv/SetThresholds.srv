@@ -1,9 +1,9 @@
-float32 flat_caution_threshold
-float32 caution_obstacle_threshold
-float32 map_resolution
-float32 inflation_radius_meters
-float32 max_filter_size
-float32 min_filter_size
+float64 flat_caution_threshold
+float64 caution_obstacle_threshold
+float64 map_resolution
+float64 inflation_radius_meters
+int32 max_filter_size
+int32 min_filter_size
 ---
 bool success
 string message
