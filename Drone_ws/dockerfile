@@ -131,6 +131,8 @@ ENV DISPLAY=:0
 ENV QT_X11_NO_MITSHM=1
 ENV ROS_DOMAIN_ID=7
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+COPY cyclonedds.xml /root/cyclonedds.xml
+ENV CYCLONEDDS_URI=file:///root/cyclonedds.xml
 
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
     echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
