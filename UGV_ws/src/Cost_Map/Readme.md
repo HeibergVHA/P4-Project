@@ -49,6 +49,9 @@ data = np.load("path/to/costmap_<timestamp>.npy")
  This has the transformation function from line: 126-132
  Make sure you visualise the costmap to confirm if you have the the right transformation or just disable it. 
 
+# Input file  
+On line 37-38 is the file path for the input pcd file.
+Change it so it doesn't need a path there and can get it no matter who runs the code. 
 
 # Below is the Arciteecture of the code 
 ```
