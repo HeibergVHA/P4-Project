@@ -10,7 +10,7 @@ import time
 
 class RadioNode(Node):
     def __init__(self):
-        super().__init__('mission_bridge')
+        super().__init__('radio_node')
 
         # Serial to 433 MHz telemetry radio
         self.radio = serial.Serial('/dev/ttyUSB0', baudrate=57600, timeout=1.0) # Find correct USB port. ######################################

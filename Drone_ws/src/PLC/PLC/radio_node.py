@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import String
 from scipy.spatial.transform import Rotation as R # To convert between Euler degrees and quatanions.
@@ -11,13 +12,14 @@ import time
 
 class RadioNode(Node):
     def __init__(self):
-        super().__init__('mission_bridge')
+        super().__init__('radio_node')
 
         # Serial to 433 MHz telemetry radio
         self.radio = serial.Serial('/dev/ttyUSB0', baudrate=57600, timeout=1.0) # Should be correct USB port ###########################
 
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         # Subscribers
-        self.create_subscription(PoseStamped, '/mavros/local_position/pose', self.position_callback, 1)
+        self.create_subscription(PoseStamped, '/mavros/local_position/pose', self.position_callback, qos)
 
         self.create_subscription(String, 'uav/radio_out/mission_status', self.status_callback, 10)
 
