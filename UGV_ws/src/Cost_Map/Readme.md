@@ -43,7 +43,8 @@ inflation_radius_meters: 0.05, max_filter_size: 2, min_filter_size: 2}"
 
 data = np.load("path/to/costmap_<timestamp>.npy")
 
-# data[:, 0] → x  |  data[:, 1] → y  |  data[:, 2] → cost
+# Data should look like
+data[:, 0] → x  |  data[:, 1] → y  |  data[:, 2] → cost
 
 # The function" load_pcd_and_process "on line 115 
  This has the transformation function from line: 126-132
