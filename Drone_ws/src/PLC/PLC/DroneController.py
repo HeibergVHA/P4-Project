@@ -227,6 +227,60 @@ class XYController:
 
         return thr_xy
 
+class PositionOnlyPDController:
+    """
+    Single-loop PD controller: x_ref → phi_cmd
+    using only measured position (no velocity measurement, no IMU).
+
+    Transfer function:
+        phi_cmd(s)     -1     Kp·(tau·s + 1) + Kd·s
+        ────────── = ─────  · ─────────────────────────
+        X_ref(s)      g            s·(tau·s + 1)
+
+    The derivative term is a filtered finite difference of position error,
+    equivalent to Kd·s / (tau·s + 1) acting on the error signal.
+    """
+
+    def __init__(
+        self,
+        Kp: float = 0.6, # 0.6
+        Kd: float = 1.2,
+        tau: float = 0.15,      # LP filter on derivative — tune this up if noisy
+        g: float = 9.81,
+        phi_max: float = np.radians(45.0),
+    ):
+        self.Kp = Kp
+        self.Kd = Kd
+        self.tau = tau
+        self.g = g
+        self.phi_max = phi_max
+
+        self._err_prev = 0.0        # previous position error
+        self._deriv_filt = 0.0      # filtered derivative state
+
+    def reset(self):
+        self._err_prev = 0.0
+        self._deriv_filt = 0.0
+
+    def update(self, x_ref: float, x_meas: float, dt: float) -> float:
+        if dt <= 0.0:
+            return 0.0
+
+        # ── 1. Position error ──────────────────────────────────────────
+        error = x_ref - x_meas
+
+        # ── 2. Filtered derivative of error (= filtered -velocity) ─────
+        # Discrete first-order LP applied to finite difference:
+        #   D(s) = Kd · s / (tau·s + 1)
+        raw_deriv = (error - self._err_prev) / dt
+        alpha = self.tau / (self.tau + dt)
+        self._deriv_filt = alpha * self._deriv_filt + (1.0 - alpha) * raw_deriv
+        self._err_prev = error
+
+        # ── 3. PD law → phi_cmd ────────────────────────────────────────
+        phi_cmd = -(1.0 / self.g) * (self.Kp * error + self.Kd * self._deriv_filt)
+
+        return float(np.clip(phi_cmd, -self.phi_max, self.phi_max))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Z Position → thrust_body[2] controller
@@ -374,7 +428,9 @@ class DroneController(Node):
             SetMode, '/mavros/set_mode')
 
         # Controllers
-        self.xy_controller = XYController(hover_thrust=0.73)
+        #self.xy_controller = XYController(hover_thrust=0.73)
+        self.x_controller = PositionOnlyPDController()
+        self.y_controller = PositionOnlyPDController()
         self.z_controller  = ZController (hover_thrust=0.73)
 
         # State
@@ -444,12 +500,18 @@ class DroneController(Node):
         
 
         # ── XY: position + velocity → horizontal thrust vector ─────────
-        thr_xy = self.xy_control.update(
+        """thr_xy = self.xy_control.update(
             pos_sp = self.target_P[:2],
             pos    = self.current_P[:2],
             vel    = self.current_vel[:2],
             dt     = self.dt,
-        )
+        )"""
+
+        phi_x = self.x_ctrl.update(self.pos_sp[0], self.pos[0], self.dt)
+        phi_y = self.y_ctrl.update(self.pos_sp[1], self.pos[1], self.dt)
+
+        thr_x = np.sin(phi_x) * thr_z   # horizontal x thrust component
+        thr_y = np.sin(phi_y) * thr_z  # horizontal y thrust component
 
         # ── Z: position + velocity → collective (vertical) thrust ───────
         thr_z = self.z_control.update(
@@ -459,7 +521,8 @@ class DroneController(Node):
             dt   = self.dt,
         )
 
-        thr_sp = np.array([thr_xy[0], thr_xy[1], thr_z])
+        #thr_sp = np.array([thr_xy[0], thr_xy[1], thr_z])
+        thr_sp = np.array([thr_x, thr_y, thr_z])
 
         q_wxyz, thrust_body_z = thrust_to_attitude(thr_sp, self.yaw_sp)
 
