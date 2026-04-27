@@ -257,7 +257,7 @@ class Drone_Cltside(Node):
         if result.success:
             self.get_logger().info(f'Start recording triggered successfully: {result.message}')
             self.bag_name = result.message
-            self.recording_timer = self.create_timer(20.0, self.trigger_stop_recording)
+            self.recording_timer = self.create_timer(60.0, self.trigger_stop_recording)
         else:
             self.get_logger().error(f'Failed to trigger start recording: {result.message}')
 

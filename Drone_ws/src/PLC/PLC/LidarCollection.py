@@ -8,6 +8,8 @@ import datetime
 import rosbag2_py
 import subprocess
 import time
+import os 
+import signal
 
 class LivoxBagRecorder(Node):
     def __init__(self):
@@ -50,7 +52,8 @@ class LivoxBagRecorder(Node):
     def start_livox_driver(self):
         self.get_logger().info('Starting Livox driver...')
         self.livox_process = subprocess.Popen(
-            ['ros2','launch','livox_ros2_driver','livox_lidar_msg_launch.py']
+            ['ros2','launch','livox_ros2_driver','livox_lidar_msg_launch.py'],
+            preexec_fn=os.setsid # Start the process in a new session to allow killing the entire process group later
         )
         time.sleep(3.0) # Wait for driver startup
         self.get_logger().info('Livox driver started.')
@@ -58,7 +61,7 @@ class LivoxBagRecorder(Node):
     def stop_livox_driver(self):
         if self.livox_process:
             self.get_logger().info('Stopping Livox driver...')
-            self.livox_process.terminate()
+            os.killpg(os.getpgid(self.livox_process.pid), signal.SIGTERM) # Kill the entire process group
             self.livox_process = None
             self.get_logger().info('Livox driver stopped.')
 
@@ -107,7 +110,7 @@ class LivoxBagRecorder(Node):
         self.writer = None
         self.recording = False
         self.get_logger().info(f'Recording stopped: {self.bag_name}')
-        self.pending_send = True
+        self._pending_send = True
         self.stop_livox_driver()
         response.success = True
         response.message = f'{self.bag_name}'

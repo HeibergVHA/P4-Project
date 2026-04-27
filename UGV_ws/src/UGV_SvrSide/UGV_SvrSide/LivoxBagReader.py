@@ -56,23 +56,28 @@ class LivoxBagReader(Node):
             response.message = str(e)
             return response
         
-        # Launch FastLio mapping
-        self.fastlio_process = subprocess.Popen(
-            ['ros2', 'launch', 'fast_lio', 'mapping.launch.py', 'config_file:=avia.yaml'],
-        )
-        self.get_logger().info('Launched FAST-LIO mapping.launch.py')
 
         # Following starts the reading loop after delay.
         self.bag_name = bag_name
-        self.read_timer = self.create_timer(5.0, self._start_bag_play)
+
+
+        self._start_bag_play()
+
+        # Give bag a moment to start publishing before FAST-LIO initializes
+        self.create_timer(0.1, self._launch_fastlio)
 
         response.success = True
         response.message = f'Reading {self.bag_name}'
         return response
 
-    def _start_bag_play(self):
-        self.read_timer.cancel()
+    def _launch_fastlio(self):
+        self.destroy_timer(self._timers[-1])
+        self.fastlio_process = subprocess.Popen(
+            ['ros2', 'launch', 'fast_lio', 'mapping.launch.py', 'config_file:=avia.yaml']
+        )
+        self.get_logger().info('Launched FAST-LIO mapping.launch.py')
 
+    def _start_bag_play(self):
         self.get_logger().info(f'playing: {self.bag_name}')
 
         self.bag_process = subprocess.Popen(
@@ -88,14 +93,15 @@ class LivoxBagReader(Node):
             self._shutdown_processes()
     
     def _shutdown_processes(self):
-        if self.bag_process:
-            self.bag_process.terminate()
-            self.bag_process = None
-            self.get_logger().info('Terminated bag play process')
         if self.fastlio_process:
             self.fastlio_process.terminate()
             self.fastlio_process = None
             self.get_logger().info('Terminated FAST-LIO process')
+        if self.bag_process:
+            self.bag_process.terminate()
+            self.bag_process = None
+            self.get_logger().info('Terminated bag play process')
+
     
     def stop_callback(self, request, response):
         if not self.bag_process:

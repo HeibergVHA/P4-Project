@@ -45,7 +45,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         lidar_collection,
-        drone_cltside,
-        send_bag
+        drone_cltside
     ])
 
