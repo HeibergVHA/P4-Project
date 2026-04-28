@@ -1,96 +1,270 @@
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped # 'Pose' data type.
+from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import String
-from scipy.spatial.transform import Rotation as R # To convert between Euler degrees and quatanions.
+from scipy.spatial.transform import Rotation as R
+import numpy as np
 
-################ "ros2 run pakage node --ros-args -p input_source:=vicon" #############
+# ros2 run <package> mission_planner_node --ros-args -p input_source:=local
 
-class MissionPlanner(Node):
+
+# Waypoint list: (x [m], y [m], z [m], yaw [deg])
+
+# DEFAULT_WAYPOINTS = [
+#     (  0.0,   0.0,  2.0,   0.0),
+#     ( 10.0,   0.0,  5.0,   0.0),
+#     ( 10.0,  10.0,  5.0,  90.0),
+#     (  0.0,  10.0,  5.0, 180.0),
+#     (  0.0,  20.0,  5.0,  90.0),
+#     ( 10.0,  20.0,  5.0,   0.0),
+#     ( 10.0,  30.0,  5.0,  90.0),
+#     (  0.0,  30.0,  5.0, 180.0),
+#     (  0.0,   0.0,  5.0, 180.0)
+# ]
+
+DEFAULT_WAYPOINTS = [
+    (  0.0,   0.0,  2.0,   0.0),
+    ( 10.0,   0.0,  5.0,   0.0),
+    (  0.0,   0.0,  5.0, 180.0)
+]
+
+# Helpers
+def unit(v):
+    n = np.linalg.norm(v)
+    if n < 1e-9: # Float check to make sure v is not devided by 0.
+        return np.zeros_like(v)
+    return v / n
+
+def project_point_to_segment(point, seg_point_a, seg_point_b):
+    seg_ab = seg_point_b - seg_point_a
+    ab_len2 = np.dot(seg_ab, seg_ab)
+    if ab_len2 < 1e-9:
+        return seg_point_a.copy(), 0.0
+    distance_along_seg = np.dot(point - seg_point_a, seg_ab) / ab_len2
+    distance_along_seg = np.clip(distance_along_seg, 0.0, 1.0)
+    closest_point = seg_point_a + distance_along_seg * seg_ab
+    return closest_point, distance_along_seg
+
+def yaw_to_quaternion_wxyz(yaw_deg):
+    """Level-flight quaternion for a given yaw angle degrees."""
+    r = R.from_euler('z', yaw_deg, degrees=True)
+    x, y, z, w = r.as_quat()   # scipy gives [x, y, z, w]
+    return np.array([w, x, y, z])
+
+def slerp_yaw(yaw_a_deg, yaw_b_deg, t):
+    """Interpolate between two yaw angles (degrees) by fraction t in [0, 1]. Handles wraparound correctly."""
+    t = float(np.clip(t, 0.0, 1.0))
+    delta = (yaw_b_deg - yaw_a_deg + 180.0) % 360.0 - 180.0   # shortest arc
+    return yaw_a_deg + t * delta
+
+
+class PurePursuitMission(Node):
+    """Parameters --->
+    input_source   : 'vicon' | 'local'
+    lookahead_dist : pure-pursuit lookahead distance [m]  (default 2.0)
+    waypoint_radius : waypoint arrival radius [m]          (default 1.0)
+    publish_rate   : Hz of the output topic               (default 50)"""
+
     def __init__(self):
         super().__init__('mission_planner')
-        
-        self.declare_parameter('input_source', 'vicon')         # Input parameter when node is started. "local" to get current position from the pixhawk
-        source = self.get_parameter('input_source').value       # "vicon" to get current position from "vicon_posee" topic.
-        self.get_logger().info(f"Using input source: {source}") # I think like this: "ros2 run pakage node --ros-args -p input_source:=vicon"
 
+        self.declare_parameter('input_source',   'local')
+        self.declare_parameter('lookahead_dist',  2.0)
+        self.declare_parameter('capture_radius',  1.0)
+        self.declare_parameter('publish_rate',   50.0)
+        source                  = self.get_parameter('input_source').value
+        self.max_lookahead      = float(self.get_parameter('lookahead_dist').value)
+        self.waypoint_radius    = float(self.get_parameter('capture_radius').value)
+        publish_rate            = float(self.get_parameter('publish_rate').value)
+        self.L_current          = 0.0
+        self.L_ramp_rate        = 1.0
+        self.hold_pos           = np.zeros(3)
+        self.hold_yaw           = 0.0
+        self.mode               = "TRACK"
+        self.current_lookahead  = 0.0
+        self.L_start            = 0.0
+        self.t_transition_start = 0.0
+
+        self.clock = self.get_clock()
+
+        self.get_logger().info(f"MissionPlanner | source={source} | L={self.max_lookahead} m | waypoint_radius={self.waypoint_radius} m | rate={publish_rate} Hz")
+
+        # Subscribers
         if source == 'local':
-            self.local_pos_sub = self.create_subscription(      # Local position. ArduPilot EKF position.
+            self.create_subscription(
                 PoseStamped, '/mavros/local_position/pose', self.local_pos_callback, 10)
-            
-        if source == 'vicon':
-            self.vicon_pos_sub = self.create_subscription(      # Vicon topic.
+        else:
+            self.create_subscription(
                 PoseStamped, 'vicon_pose', self.vicon_pos_callback, 10)
 
-        self.create_subscription(String, 'uav/radio_in/target_waypoint', self.target_waypoint_callback, 10)
-            
-        self.target_pos_pub = self.create_publisher(         # Target position topic.
+        self.create_subscription( # Radio: append waypoint "x,y,z,yaw"
+            String, 'uav/radio_in/target_waypoint', self.radio_waypoint_callback, 10)
+
+        self.create_subscription( # Radio: mission commands  "start" | "pause" | "resume" | "abort"
+            String, 'uav/radio_in/mission_command', self.radio_command_callback, 10)
+
+        # Publisher
+        self.target_pub = self.create_publisher(
             PoseStamped, 'uav/target_pos', 10)
-        
 
-        # Current postition
-        self.current_x = 0.0            # Meters
-        self.current_y = 0.0
-        self.current_z = 0.0
+        # Waypoint list
+        self.waypoints= [np.array([x, y, z, yaw], dtype=float) for x, y, z, yaw in DEFAULT_WAYPOINTS]
+        self.seg_idx = 0        # Index of the of the active segment. segment i goes from waypoints[i] → waypoints[i+1]
 
-        # Target position
-        self.target_x = 0.0
-        self.target_y = 0.0
-        self.target_z = 0.0
-        self.target_qw = 0.0
-        self.target_qx = 0.0
-        self.target_qy = 0.0
-        self.target_qz = 0.0
+        # State
+        self.pos = np.zeros(3)  # Current position [x, y, z]
+        self.mission_active = False
 
-        self.timer = self.create_timer(0.02, self.control_loop) # 0.02 sek = 50 Hz
+        # Loop timer
+        dt = 1.0 / publish_rate
+        self.create_timer(dt, self.control_loop)
 
-        self.get_logger().info('vicon node started')
+        self.get_logger().info('MissionPlanner node started — send "start" to begin')
 
-    def local_pos_callback(self, msg):
-        self.current_x = msg.pose.position.x
-        self.current_y = msg.pose.position.y
-        self.current_z = msg.pose.position.z
+    # Callbacks
+    def local_pos_callback(self, msg: PoseStamped):
+        self.pos[:] = [msg.pose.position.x,
+                       msg.pose.position.y,
+                       msg.pose.position.z]
 
-    def vicon_pos_callback(self, msg):
-        self.current_x = msg.pose.position.x
-        self.current_y = msg.pose.position.y
-        self.current_z = msg.pose.position.z
-    
-    def target_waypoint_callback(self, msg):
-        x = 123
-        # Waypoints.append(msg) # Or something like that.
-    
-    def control_loop(self): # Control loop at or around 50 Hz. Does not strictly need to be 50 Hz, just need a new position before the old is reached.
-        
-        stamp = self.get_clock().now().to_msg()
-        
-        ##################### DETERMINE TARGET POSITION HERE ##########################
-        #### Mby bezier curve or b-spline based on waypoints.
-        ## Then pure-persuit algorithm
-        # self.target_x = 0.0
-        # self.target_y = 0.0
-        # self.target_z = 0.0
+    def vicon_pos_callback(self, msg: PoseStamped):
+        self.pos[:] = [msg.pose.position.x,
+                       msg.pose.position.y,
+                       msg.pose.position.z]
 
-        msg = PoseStamped()             # Create and send 
-        msg.header.stamp = stamp
-        msg.header.frame_id = 'targetPos'
-        msg.pose.position.x = self.target_x
-        msg.pose.position.y = self.target_y
-        msg.pose.position.z = self.target_z
-        msg.pose.orientation.w = self.target_qw
-        msg.pose.orientation.x = self.target_qx
-        msg.pose.orientation.y = self.target_qy
-        msg.pose.orientation.z = self.target_qz
+    def radio_waypoint_callback(self, msg: String):
+        """Append a waypoint received over radio as 'x,y,z,yaw'."""
+        try:
+            parts = [float(v) for v in msg.data.split(',')]
+            if len(parts) != 4:
+                raise ValueError("Need exactly 4 values: x,y,z,yaw")
+            self.waypoints.append(np.array(parts))
+            self.get_logger().info(f'Waypoint added: {parts}')
+        except Exception as e:
+            self.get_logger().warn(f'Bad waypoint message "{msg.data}": {e}')
 
-        self.target_pos_pub.publish(msg)       # Send
+    def radio_command_callback(self, msg: String):
+        cmd = msg.data.strip().lower()
+        if cmd == 'start':
+            self.mission_active = True
+            self.seg_idx = 0
+            self.get_logger().info('Mission STARTED')
+        elif cmd == 'pause':
+            self.mission_active = False
+            self.get_logger().info('Mission PAUSED — holding current reference')
+        elif cmd == 'resume':
+            self.mission_active = True
+            self.get_logger().info('Mission RESUMED')
+        elif cmd == 'abort':
+            self.mission_active = False
+            self.seg_idx = 0
+            self.get_logger().warn('Mission ABORTED')
+        else:
+            self.get_logger().warn(f'Unknown command: "{cmd}"')
+
+    # Pure-pursuit
+    def pure_pursuit(self):
+        t = self.clock.now().nanoseconds * 1e-9
+
+        # Waypoints
+        if self.seg_idx >= len(self.waypoints) - 1:
+            wp = self.waypoints[-1]
+            return wp[:3], wp[3]
+
+        A = self.waypoints[self.seg_idx][:3]
+        B = self.waypoints[self.seg_idx + 1][:3]
+
+        has_next = (self.seg_idx + 2 < len(self.waypoints))
+        if has_next:
+            C = self.waypoints[self.seg_idx + 2][:3]
+
+        p = self.pos
+
+        dist_to_B = np.linalg.norm(p - B)
+
+        closest_point, distance_along_seg = project_point_to_segment(p, A, B)
+
+        if has_next:
+            f_BC, distance_along_seg_BC = project_point_to_segment(p, B, C)
+            d_AB = np.linalg.norm(p - closest_point)
+            d_BC = np.linalg.norm(p - f_BC)
+        else:
+            d_AB = np.linalg.norm(p - closest_point)
+            d_BC = np.inf
+
+        # Lookahead computation
+        dist_CP_B = np.linalg.norm(closest_point - B)
+        dt = t - self.t_transition_start
+        self.current_lookahead = min(dist_CP_B, min(self.max_lookahead, self.L_start + self.L_ramp_rate * dt)) # Lookahead distance
+
+        # Mode
+        if self.mode == "TRACK":
+            ref_out = closest_point + unit(B - A) * self.current_lookahead # Lookahead point
+            if dist_to_B <= self.max_lookahead:
+                self.mode = "APPROACH"
+        elif self.mode == "APPROACH":
+            ref_out = B
+            if dist_to_B <= self.waypoint_radius:
+                self.mode = "TRANSITION"
+                self.t_transition_start = t
+        elif self.mode == "TRANSITION":
+            if has_next:
+                ref_out = B + unit(C - B) * self.current_lookahead
+            else:
+                ref_out = B.copy()
+            _, lookahead_distance_along_seg_BC = project_point_to_segment(ref_out, B, C)
+            if has_next and (d_BC < d_AB) and distance_along_seg_BC < lookahead_distance_along_seg_BC:
+                self.t_transition_start = t
+                self.seg_idx += 1
+                self.mode = "TRACK"
+
+        # Yaw interpolation 
+        yaw_A = self.waypoints[self.seg_idx][3] # Yaw at last waypoint
+        yaw_B = self.waypoints[self.seg_idx + 1][3] # Target yaw at next waypoint
+
+        delta_yaw = (yaw_B - yaw_A + 180.0) % 360.0 - 180.0 # shortest arc (wraparound handeling)
+        yaw = yaw_A + float(distance_along_seg) * delta_yaw # Yaw based on progress along segment
+
+        return ref_out, yaw
+
+    def publish(self, target_xyz: np.ndarray, target_yaw: float):
+        q_wxyz = yaw_to_quaternion_wxyz(target_yaw)
+        msg = PoseStamped()
+        msg.header.stamp    = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.pose.position.x = float(target_xyz[0])
+        msg.pose.position.y = float(target_xyz[1])
+        msg.pose.position.z = float(target_xyz[2])
+        msg.pose.orientation.w = float(q_wxyz[0])
+        msg.pose.orientation.x = float(q_wxyz[1])
+        msg.pose.orientation.y = float(q_wxyz[2])
+        msg.pose.orientation.z = float(q_wxyz[3])
+
+        self.target_pub.publish(msg)
+
+    # Control loop
+    def control_loop(self):
+        if not self.mission_active:
+            self.publish(self.hold_pos, self.hold_yaw)
+            return
+
+        # Compute lookahead reference
+        target_xyz, target_yaw = self.pure_pursuit()
+
+        # Publish
+        self.publish(target_xyz, target_yaw)
+
+
+        self.hold_pos = target_xyz.copy()
+        self.hold_yaw = target_yaw
+
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MissionPlanner()
+    node = PurePursuitMission()
     rclpy.spin(node)
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

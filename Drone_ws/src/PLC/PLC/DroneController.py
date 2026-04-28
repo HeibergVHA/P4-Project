@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped # 'Pose' data type.
+from std_msgs.msg import String
 from mavros_msgs.msg import State, Thrust
 from mavros_msgs.srv import CommandBool, SetMode
 from scipy.spatial.transform import Rotation as R # To convert between Euler degrees and quatanions.
@@ -412,6 +413,8 @@ class DroneController(Node):
             
         self.target_pos_sub = self.create_subscription(         # Target position topic.
             PoseStamped, 'uav/target_pos', self.target_pos_callback, 10)
+        
+        self.create_subscription(String, 'uav/radio_in/mission_command', self.mission_command_callback, 10)
 
         # Publishers 
         self.att_pub = self.create_publisher(                   # Control drone orientation (attitude) mavros topic.
@@ -488,6 +491,17 @@ class DroneController(Node):
         self.target_z = msg.pose.position.z
         self.target_P = np.array([self.target_x, self.target_y, self.target_z])
 
+    def mission_command_callback(self, msg):
+        command = msg.data
+        if command == 'arm':
+            self.arm()
+        elif command == 'guided':
+            self.set_mode('guided')
+        else:
+            self.get_logger().warn(f'Unknown mission command received: {command}')
+            return
+        self.get_logger().info(f'Mission command received: {command}')
+
     
     def control_loop(self): # Control loop (50 Hz)
         
@@ -555,14 +569,14 @@ class DroneController(Node):
         self.thr_pub.publish(thr_msg)       # Send the thrust
 
     # Service helpers
-    def arm(self): # yes
+    def arm(self):
         req = CommandBool.Request()
         req.value = True
         future = self.arming_client.call_async(req)
         self.get_logger().info('Arming requested')
         return future
 
-    def set_mode(self, mode: str): # Not used, and should probably not be used. Changing state should probably exclusively be changed on the RC.
+    def set_mode(self, mode):
         req = SetMode.Request()
         req.custom_mode = mode  
         future = self.set_mode_client.call_async(req)
