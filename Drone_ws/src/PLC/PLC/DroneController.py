@@ -393,7 +393,7 @@ class DroneController(Node):
     def __init__(self):
         super().__init__('drone_controller')
         
-        self.declare_parameter('input_source', 'vicon')         # Input parameter when node is started. "local" to get current position from the pixhawk
+        self.declare_parameter('input_source', 'local')         # Input parameter when node is started. "local" to get current position from the pixhawk
         source = self.get_parameter('input_source').value       # "vicon" to get current position from "vicon_posee" topic.
         self.get_logger().info(f"Using input source: {source}") # I think like this: "ros2 run pakage node --ros-args -p input_source:=vicon"
 

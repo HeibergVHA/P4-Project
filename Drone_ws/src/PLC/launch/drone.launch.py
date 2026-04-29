@@ -17,6 +17,18 @@ def generate_launch_description():
             )
         )
     )
+    mavros_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('mavros'),
+                'launch',
+                'apm.launch.py'   # note the .py
+            )
+        ),
+        launch_arguments={
+            'fcu_url': '/dev/ttyAMA0:921600'
+        }.items()
+)
 
     lidar_collection = Node(
         package='PLC',
@@ -32,6 +44,27 @@ def generate_launch_description():
         output='screen'
     )
 
+    radio_node = Node(
+        package='PLC',
+        executable='radio_node',
+        name='radio_node',
+        output='screen'
+    )
+
+    mission_planner_node = Node(
+        package='PLC',
+        executable='mission_planner_node',
+        name='mission_planner_node',
+        output='screen'
+    )
+
+    DroneController = Node(
+        package='PLC',
+        executable='DroneController',
+        name='DroneController',
+        output='screen'
+    )
+
     #Give stop recording some time to finish before sending the rosbag
     send_bag = TimerAction(
         period=30.0,
@@ -44,7 +77,11 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        lidar_collection,
-        drone_cltside
+        # lidar_collection,
+        # drone_cltside
+        mavros_launch,
+        radio_node,
+        mission_planner_node,
+        DroneController
     ])
 
