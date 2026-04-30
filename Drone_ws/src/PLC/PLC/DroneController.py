@@ -2,9 +2,10 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped # 'Pose' data type.
-from std_msgs.msg import String
+from std_msgs.msg import String, Header
 from mavros_msgs.msg import State, Thrust
 from mavros_msgs.srv import CommandBool, SetMode
+from mavros_msgs.msg import AttitudeTarget
 from scipy.spatial.transform import Rotation as R # To convert between Euler degrees and quatanions.
 import numpy as np
 
@@ -417,11 +418,8 @@ class DroneController(Node):
         self.create_subscription(String, 'uav/radio_in/mission_command', self.mission_command_callback, 10)
 
         # Publishers 
-        self.att_pub = self.create_publisher(                   # Control drone orientation (attitude) mavros topic.
-            PoseStamped, '/mavros/setpoint_attitude/attitude', 10)
-
-        self.thr_pub = self.create_publisher(                   # Control drone thrust mavros topic. This and attitude have to be published with identical time stamp for some reason... idk why... Claude said so...
-            Thrust, '/mavros/setpoint_attitude/thrust', 10)
+        self.att_thr_pub = self.create_publisher(
+            AttitudeTarget, '/mavros/setpoint_raw/attitude', 10)
 
         # Service clients
         self.arming_client = self.create_client(                # To arm the drone...
@@ -498,11 +496,11 @@ class DroneController(Node):
         elif command == 'disarm':
             self.arm(False)
         elif command == 'guided':
-            self.set_mode('guided')
+            self.set_mode('GUIDED')
         elif command == 'angle':
-            self.set_mode('angle')
+            self.set_mode('ANGLE')
         elif command == 'stable':
-            self.set_mode('stable')
+            self.set_mode('STABLE')
         else:
             self.get_logger().warn(f'Unknown mission command received: {command}')
             return
@@ -553,26 +551,23 @@ class DroneController(Node):
         self.target_thrust = thrust_body_z #### PID based on height over ground (and maby angle because the force vector no longer vertical). 0.0 to 1.0
         ### Lige her #########
 
-        
-        stamp = self.get_clock().now().to_msg()
-        
-        #r = R.from_euler('xyz', [self.target_roll, self.target_pitch, self.target_yaw], degrees=True) # Euler degrees to quatanions -->
-        #q = r.as_quat()  # [x, y, z, w]
+        msg = AttitudeTarget()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
 
-        att_msg = PoseStamped()             # Create and send the orientation 
-        att_msg.header.stamp = stamp
-        att_msg.header.frame_id = 'map'
-        att_msg.pose.orientation.w = q_wxyz[0]
-        att_msg.pose.orientation.x = q_wxyz[1]
-        att_msg.pose.orientation.y = q_wxyz[2]
-        att_msg.pose.orientation.z = q_wxyz[3]
+        # Bitmask: ignore body rates (0b00000111 = 7), use attitude + thrust
+        msg.type_mask = AttitudeTarget.IGNORE_ROLL_RATE | \
+                        AttitudeTarget.IGNORE_PITCH_RATE | \
+                        AttitudeTarget.IGNORE_YAW_RATE
 
-        thr_msg = Thrust()                  # Create and send the thrust
-        thr_msg.header.stamp = stamp
-        thr_msg.thrust = self.target_thrust
+        msg.orientation.w = q_wxyz[0]
+        msg.orientation.x = q_wxyz[1]
+        msg.orientation.y = q_wxyz[2]
+        msg.orientation.z = q_wxyz[3]
 
-        self.att_pub.publish(att_msg)       # Send the orientation
-        self.thr_pub.publish(thr_msg)       # Send the thrust
+        msg.thrust = float(np.clip(-thrust_body_z, 0.0, 1.0))  # Must be 0.0–1.0, positive
+
+        self.att_thr_pub.publish(msg)
 
     # Service helpers
     def arm(self, x):
