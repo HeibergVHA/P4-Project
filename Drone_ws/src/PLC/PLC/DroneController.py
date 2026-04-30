@@ -494,9 +494,15 @@ class DroneController(Node):
     def mission_command_callback(self, msg):
         command = msg.data
         if command == 'arm':
-            self.arm()
+            self.arm(True)
+        elif command == 'disarm':
+            self.arm(False)
         elif command == 'guided':
             self.set_mode('guided')
+        elif command == 'angle':
+            self.set_mode('angle')
+        elif command == 'stable':
+            self.set_mode('stable')
         else:
             self.get_logger().warn(f'Unknown mission command received: {command}')
             return
@@ -569,9 +575,9 @@ class DroneController(Node):
         self.thr_pub.publish(thr_msg)       # Send the thrust
 
     # Service helpers
-    def arm(self):
+    def arm(self, x):
         req = CommandBool.Request()
-        req.value = True
+        req.value = x
         future = self.arming_client.call_async(req)
         self.get_logger().info('Arming requested')
         return future
