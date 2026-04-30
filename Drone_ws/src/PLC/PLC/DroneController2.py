@@ -430,9 +430,9 @@ class DroneController(Node):
 
         # Controllers
         #self.xy_controller = XYController(hover_thrust=0.73)
-        self.x_controller = PositionOnlyPDController()   # FIX 3: was x_ctrl
-        self.y_controller = PositionOnlyPDController()   # FIX 3: was y_ctrl
-        self.z_controller  = ZController(hover_thrust=0.73)  # FIX 3: was z_control
+        self.x_controller = PositionOnlyPDController()
+        self.y_controller = PositionOnlyPDController()
+        self.z_controller  = ZController (hover_thrust=0.73)
 
         # State
         self.current_state = State()        # Stores if the drone is connected, armed, and state.
@@ -442,7 +442,6 @@ class DroneController(Node):
         self.current_y = 0.0
         self.current_z = 0.0
         self.current_P = np.array([self.current_x, self.current_y, self.current_z])
-        self.prev_P    = self.current_P.copy()  # FIX 1: replaces self.pos_0, saved before update
 
         # Target position
         self.target_x = 0.0             # Meters
@@ -450,11 +449,8 @@ class DroneController(Node):
         self.target_z = 0.0
         self.target_P = np.array([self.target_x, self.target_y, self.target_z])
 
-        # FIX 6: current_vel must be a 3-element array, not a scalar 0.0
-        self.current_vel = np.zeros(3)
-
-        # FIX 5: yaw setpoint was never defined
-        self.yaw_sp = 0.0
+        ############## EDIT THIS ONE ######################
+        self.current_vel = 0.0
 
         # Orientation (attitude) setpoints
         self.target_roll  = 0.0         # Degrees
@@ -474,17 +470,17 @@ class DroneController(Node):
         self.current_state = msg
 
     def local_pos_callback(self, msg):
-        self.prev_P    = self.current_P.copy()  # FIX 1: save before overwriting
         self.current_x = msg.pose.position.x
         self.current_y = msg.pose.position.y
         self.current_z = msg.pose.position.z
+        self.pos_0 = self.current_P  # This is used explicitly for velocity calculation
         self.current_P = np.array([self.current_x, self.current_y, self.current_z])
 
     def vicon_pos_callback(self, msg):
-        self.prev_P    = self.current_P.copy()  # FIX 1: save before overwriting
         self.current_x = msg.pose.position.x
         self.current_y = msg.pose.position.y
         self.current_z = msg.pose.position.z
+        self.pos_0 = self.current_P # This is used explicitly for velocity calculation
         self.current_P = np.array([self.current_x, self.current_y, self.current_z])
 
     def target_pos_callback(self, msg):
@@ -513,35 +509,39 @@ class DroneController(Node):
     
     def control_loop(self): # Control loop (50 Hz)
         
-        # FIX 7: self.current_state.guided is not a valid field on mavros State.
-        # Correct check is .mode == 'GUIDED' and .armed
-        if not (self.current_state.mode == 'GUIDED' and self.current_state.armed):
+        if not self.current_state.guided or not self.current_state.armed: # Check if drone is ARMED and in correct flight mode
+
             return
 
-        # FIX 1 & 6: use current_vel (array) and prev_P instead of undefined self.vel / self.pos / self.pos_0
-        self.current_vel = (self.current_P - self.prev_P) * self.RATE_HZ
+        # Setting velocity using past position
+        self.vel = (self.pos - self.pos_0) * self.RATE_HZ
+        
 
-        # ── Z first — thr_z is needed for XY tilt decomposition ── FIX 2 ──
-        thr_z = self.z_controller.update(   # FIX 3: z_controller not z_control
+        # ── XY: position + velocity → horizontal thrust vector ─────────
+        """thr_xy = self.xy_control.update(
+            pos_sp = self.target_P[:2],
+            pos    = self.current_P[:2],
+            vel    = self.current_vel[:2],
+            dt     = self.dt,
+        )"""
+
+        phi_x = self.x_ctrl.update(self.pos_sp[0], self.pos[0], self.dt)
+        phi_y = self.y_ctrl.update(self.pos_sp[1], self.pos[1], self.dt)
+
+        thr_x = np.sin(phi_x) * thr_z   # horizontal x thrust component
+        thr_y = np.sin(phi_y) * thr_z  # horizontal y thrust component
+
+        # ── Z: position + velocity → collective (vertical) thrust ───────
+        thr_z = self.z_control.update(
             z_sp = self.target_P[2],
             z    = self.current_P[2],
             vz   = self.current_vel[2],
             dt   = self.dt,
         )
 
-        # ── XY: position → tilt angle → horizontal thrust ─────────────
-        # FIX 3: x_controller/y_controller, not x_ctrl/y_ctrl
-        # FIX 4: self.target_P used as pos_sp (self.pos_sp was never defined)
-        phi_x = self.x_controller.update(self.target_P[0], self.current_P[0], self.dt)
-        phi_y = self.y_controller.update(self.target_P[1], self.current_P[1], self.dt)
-
-        thr_x = np.sin(phi_x) * abs(thr_z)   # horizontal x thrust component (thr_z is negative NED)
-        thr_y = np.sin(phi_y) * abs(thr_z)   # horizontal y thrust component
-
         #thr_sp = np.array([thr_xy[0], thr_xy[1], thr_z])
         thr_sp = np.array([thr_x, thr_y, thr_z])
 
-        # FIX 5: self.yaw_sp is now defined (0.0 rad default)
         q_wxyz, thrust_body_z = thrust_to_attitude(thr_sp, self.yaw_sp)
 
         ########### Reguleringssystem ############
