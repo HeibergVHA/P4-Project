@@ -109,7 +109,7 @@ class PurePursuitMission(Node):
 
         # Waypoint list
         self.waypoints= [np.array([x, y, z, yaw], dtype=float) for x, y, z, yaw in DEFAULT_WAYPOINTS]
-        self.seg_idx = 0        # Index of the of the active segment. segment i goes from waypoints[i] → waypoints[i+1]
+        self.seg_idx = 0        # Index of the of the active segment. segment i goes from waypoints[i] to waypoints[i+1]
 
         # State
         self.pos = np.zeros(3)  # Current position [x, y, z]
