@@ -490,6 +490,7 @@ class DroneController(Node):
         self.target_P = np.array([self.target_x, self.target_y, self.target_z])
 
     def mission_command_callback(self, msg):
+        return
         command = msg.data
         if command == 'arm':
             self.arm(True)
