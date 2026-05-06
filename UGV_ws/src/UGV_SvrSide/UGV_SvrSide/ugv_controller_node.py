@@ -52,7 +52,6 @@ class UGVController(Node):
 
         # Serial
         self.ser = serial.Serial('/dev/ttyUSB1', baudrate=115200, timeout=1.0)
-        self.zero_found = False       # FIX: declare before serial thread starts
 
         # Subscribers
         self.create_subscription(String, '/ugv/state', self.state_callback, 10)
@@ -91,6 +90,7 @@ class UGVController(Node):
         self.timer = self.create_timer(self.dt, self.control_loop)
 
         # Serial thread
+        self.zero_found = False
         self.last_steer_deg = 90   # 90 = straight ahead after the +90 offset
         self.last_sent = 0
         self.serial_thread = threading.Thread(target=self.serial_loop, daemon=True)
