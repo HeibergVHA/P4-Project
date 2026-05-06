@@ -34,9 +34,10 @@ class LidarCostmapGenerator(Node):
         self.get_logger().info("NODE STARTED")
 
         # ── Parameters ────────────────────────────────────────────────────
-        self.declare_parameter('pcd_file_path',
-            '/ros2_ws/deps/FAST_LIO_ROS2/PCD/scans.pcd')
+        #self.declare_parameter('pcd_file_path',
+        #    '/home/jesper-kwame-jensen/Desktop/P4-Project/UGV_ws/src/Cost_Map/PCD_File/scans.pcd')
         #ros2_ws/PCD/name.pcd
+        self.declare_parameter('pcd_file_path', 'Cost_Map/resource/WALLR1.pcd')  # <-- Update this path to your PCD file
         self.declare_parameter('map_frame_id',            'map')
         self.declare_parameter('costmap_resolution',      0.05)
         self.declare_parameter('inflation_radius_meters', 0.05)
