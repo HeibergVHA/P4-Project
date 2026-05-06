@@ -525,11 +525,11 @@ class DroneController(Node):
             dt     = self.dt,
         )"""
 
-        phi_x = self.x_ctrl.update(self.target_P[0], self.current_P[0], self.dt)
-        phi_y = self.y_ctrl.update(self.target_P[1], self.current_P[1], self.dt)
+        phi_x = self.x_controller.update(self.target_P[0], self.current_P[0], self.dt)
+        phi_y = self.y_controller.update(self.target_P[1], self.current_P[1], self.dt)
 
         # ── Z: position + velocity → collective (vertical) thrust ───────
-        thr_z = self.z_control.update(
+        thr_z = self.z_controller.update(
             z_sp = self.target_P[2],
             z    = self.current_P[2],
             vz   = self.vel[2],
