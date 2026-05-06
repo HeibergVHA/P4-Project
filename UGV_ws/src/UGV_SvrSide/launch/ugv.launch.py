@@ -21,6 +21,14 @@ def generate_launch_description():
         name='livox_bag_reader',
         output='screen'
     )
+    
+    lidar_costmap_node = Node(
+        package='Cost_Map',
+        executable='lidar_costmap_node',
+        name='lidar_costmap_node',
+        output='screen'
+    )
+
 
     fast_lio = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -41,4 +49,5 @@ def generate_launch_description():
     return LaunchDescription([
         ugv_svrside,
         livox_bag_reader,
+        lidar_costmap_node
     ])

@@ -57,6 +57,7 @@ class UGV_SvrSide(Node):
         self.create_service(Trigger, '/disconnect', self._cb_disconnect)
 
         self.start_reading_client = self.create_client(Trigger, '/start_reading')
+
         # start listening in background
         threading.Thread(target=self._listen_loop, daemon=True).start()
 
@@ -252,6 +253,7 @@ class UGV_SvrSide(Node):
             self.get_logger().info(f'Start reading: {result.message}')
         else:
             self.get_logger().error(f'Failed to start reading: {result.message}')
+
 
 
 def main(args=None):
