@@ -35,7 +35,7 @@ class LidarCostmapGenerator(Node):
 
         # ── Parameters ────────────────────────────────────────────────────
         self.declare_parameter('pcd_file_path',
-            '/home/jesper-kwame-jensen/Desktop/P4-Project/UGV_ws/src/Cost_Map/PCD_File/scans.pcd')
+            '/ros2_ws/deps/FAST_LIO_ROS2/PCD/scans.pcd')
         #ros2_ws/PCD/name.pcd
         self.declare_parameter('map_frame_id',            'map')
         self.declare_parameter('costmap_resolution',      0.05)

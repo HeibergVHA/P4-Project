@@ -27,6 +27,8 @@ class LivoxBagReader(Node):
             '/stop_reading',
             self.stop_callback
         )
+        # ros2 service call /generate_costmap std_srvs/srv/Trigger "{}"
+        self.create_costmap = self.create_client(Trigger, '/generate_costmap')
 
 
     def get_latest_bag(self):
@@ -91,6 +93,7 @@ class LivoxBagReader(Node):
             self.poll_timer.cancel()
             self.get_logger().info('Bag play finished')
             self._shutdown_processes()
+            self.trigger_generate_costmap()
     
     def _shutdown_processes(self):
         if self.fastlio_process:
@@ -114,6 +117,18 @@ class LivoxBagReader(Node):
         response.success = True
         response.message = f'Stopped reading {self.bag_name}'
         return response
+
+    def trigger_generate_costmap(self):
+        request = Trigger.Request()
+        future = self.create_costmap.call_async(request)
+        future.add_done_callback(self.generate_costmap_response_cb)
+
+    def generate_costmap_response_cb(self, future):
+        result = future.result()
+        if result.success:
+            self.get_logger().info(f'Costmap generated: {result.message}')
+        else:
+            self.get_logger().error(f'Failed to generate costmap: {result.message}')
         
 def main(args=None):
     rclpy.init(args=args)
