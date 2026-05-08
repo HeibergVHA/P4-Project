@@ -110,7 +110,7 @@ class LidarTemplateMatcherNode(Node):
             scene = self._load_scene()
 
             # 2. Remove floor plane
-            #scene = self._remove_floor(scene)
+            scene = self._remove_floor(scene)
 
             # 3. Z-height filter — discard ground noise and tall obstacles
             scene = self._filter_z(scene)
@@ -350,7 +350,7 @@ class LidarTemplateMatcherNode(Node):
                 best = result
             
             # Good enogh result, no need to keep trying random restarts
-            if best >= 0.7:
+            if best.fitness >= 0.7:
                 break
             
         return best
