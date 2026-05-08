@@ -14,6 +14,7 @@ setup(
         ('share/' + package_name + '/resource', glob.glob('resource/*')),
         ('share/' + package_name + '/Cost_Map_Coordinates', glob.glob('Cost_Map_Coordinates/*')),
         ('share/' + package_name + '/launch', glob.glob('launch/*.launch.py')),
+        ('share/' + package_name + '/config/', glob.glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -30,6 +31,7 @@ setup(
         'console_scripts': [
         'lidar_costmap_node = Cost_Map.lidar_costmap_node:main',
         'lidar_template_matcher_node = Cost_Map.lidar_template_matcher_node:main',
+        'pcd_publisher = Cost_Map.pcd_publisher:main',
         ],
     },
 )

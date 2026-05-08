@@ -126,6 +126,8 @@ class LidarCostmapGenerator(Node):
                 self.get_logger().error(f"PCD file has no points: {self.pcd_file_path}")
                 return None, None, None, None
 
+            pcd = self.align_floor_to_xy_plane(pcd)
+
             points = np.asarray(pcd.points)
 
             # Rotate 90° around Y to align sensor frame → map frame
@@ -170,6 +172,104 @@ class LidarCostmapGenerator(Node):
         has_data = grid_z_counts > 0
         return elevation_map, has_data
 
+    def align_floor_to_xy_plane(points,
+                            distance_threshold=0.02,
+                            ransac_n=3,
+                            num_iterations=1000):
+        """
+        Align a point cloud so the floor lies on the XY-plane (z=0).
+
+        Parameters
+        ----------
+        points : np.ndarray
+            Nx3 array of XYZ points.
+
+        distance_threshold : float
+            Max distance from plane to count as inlier.
+
+        ransac_n : int
+            Number of points sampled per RANSAC iteration.
+
+        num_iterations : int
+            Number of RANSAC iterations.
+
+        Returns
+        -------
+        aligned_points : np.ndarray
+            Nx3 transformed points where floor is horizontal.
+
+        transform : np.ndarray
+            4x4 homogeneous transform matrix.
+
+        plane_model : tuple
+            Plane equation (a,b,c,d): ax + by + cz + d = 0
+        """
+
+        # -----------------------------------
+        # Convert to Open3D point cloud
+        # -----------------------------------
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+
+        # -----------------------------------
+        # Detect dominant plane (floor)
+        # -----------------------------------
+        plane_model, inliers = pcd.segment_plane(
+            distance_threshold=distance_threshold,
+            ransac_n=ransac_n,
+            num_iterations=num_iterations
+        )
+
+        a, b, c, d = plane_model
+        normal = np.array([a, b, c], dtype=float)
+        normal /= np.linalg.norm(normal)
+
+        # -----------------------------------
+        # Ensure normal points upward
+        # -----------------------------------
+        if normal[2] < 0:
+            normal *= -1
+            d *= -1
+
+        # -----------------------------------
+        # Rotate floor normal -> +Z axis
+        # -----------------------------------
+        target = np.array([0.0, 0.0, 1.0])
+
+        v = np.cross(normal, target)
+        s = np.linalg.norm(v)
+        c = np.dot(normal, target)
+
+        if s < 1e-8:
+            R = np.eye(3)
+        else:
+            vx = np.array([
+                [0, -v[2], v[1]],
+                [v[2], 0, -v[0]],
+                [-v[1], v[0], 0]
+            ])
+
+            R = np.eye(3) + vx + vx @ vx * ((1 - c) / (s ** 2))
+
+        # -----------------------------------
+        # Rotate points
+        # -----------------------------------
+        rotated = (R @ points.T).T
+
+        # -----------------------------------
+        # Translate floor to z = 0
+        # -----------------------------------
+        floor_z = np.mean(rotated[inliers, 2])
+        rotated[:, 2] -= floor_z
+
+        # -----------------------------------
+        # Build transform matrix
+        # -----------------------------------
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[2, 3] = -floor_z
+
+        return rotated, T, plane_model
 
     def publish_pointcloud(self, points):
         """

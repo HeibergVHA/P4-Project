@@ -1,0 +1,32 @@
+/**:
+  ros__parameters:
+    # Path to the template PCD (override via launch argument or CLI)
+    template_path: ""
+ 
+    # ── Preprocessing ──────────────────────────────────────────────────────
+    # Voxel grid leaf size (metres).
+    # Smaller  → more detail, slower.  Larger → faster, less accurate.
+    voxel_size: 0.05
+ 
+    # Normal estimation search radius = normal_radius_mult × voxel_size
+    normal_radius_mult: 2.0
+ 
+    # FPFH feature search radius = fpfh_radius_mult × voxel_size
+    fpfh_radius_mult: 5.0
+ 
+    # ── RANSAC global registration ─────────────────────────────────────────
+    # Inlier distance threshold = ransac_dist_mult × voxel_size
+    ransac_dist_mult: 1.5
+ 
+    # ── ICP refinement ─────────────────────────────────────────────────────
+    # Max correspondence distance = icp_dist_mult × voxel_size
+    icp_dist_mult: 3.0
+ 
+    # ── Publication gating ─────────────────────────────────────────────────
+    # Only publish pose/cloud when  score = (1 - icp_fitness) <= this value.
+    # 0.0 = perfect fit required;  1.0 = always publish.
+    fitness_threshold: 0.6
+ 
+    # Skip scene clouds with fewer points than this
+    min_scene_points: 500
+ 
