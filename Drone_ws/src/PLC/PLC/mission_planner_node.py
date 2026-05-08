@@ -4,30 +4,62 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import String
 from scipy.spatial.transform import Rotation as R
 import numpy as np
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
+
+try:
+    from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
+    OffboardControlMode, VehicleCommand
+    PX4_AVAILABLE = True
+except ImportError:
+    PX4_AVAILABLE = False
+
 
 # ros2 run <package> mission_planner_node --ros-args -p input_source:=local
 
 
 # Waypoint list: (x [m], y [m], z [m], yaw [deg])
 
-# DEFAULT_WAYPOINTS = [
-#     (  0.0,   0.0,  2.0,   0.0),
-#     ( 10.0,   0.0,  5.0,   0.0),
-#     ( 10.0,  10.0,  5.0,  90.0),
-#     (  0.0,  10.0,  5.0, 180.0),
-#     (  0.0,  20.0,  5.0,  90.0),
-#     ( 10.0,  20.0,  5.0,   0.0),
-#     ( 10.0,  30.0,  5.0,  90.0),
-#     (  0.0,  30.0,  5.0, 180.0),
-#     (  0.0,   0.0,  5.0, 180.0)
-# ]
-
 DEFAULT_WAYPOINTS = [
-    (  0.0,   0.0,  2.0,   0.0),
-    ( 10.0,   0.0,  5.0,   0.0),
-    (  0.0,   0.0,  5.0, 180.0)
+    (  0.0,   0.0,  -2.0,   0.0),
+    ( 10.0,   0.0,  -5.0,   0.0),
+    ( 10.0,  10.0,  -5.0,  90.0),
+    (  0.0,  10.0,  -5.0, 180.0),
+    (  0.0,  20.0,  -5.0,  90.0),
+    ( 10.0,  20.0,  -5.0,   0.0),
+    ( 10.0,  30.0,  -5.0,  90.0),
+    (  0.0,  30.0,  -5.0, 180.0),
+    (  0.0,   0.0,  -5.0, 180.0)
 ]
 
+# DEFAULT_WAYPOINTS = [
+#     (  0.0,   0.0,  -2.0,   0.0),
+#     ( 10.0,   0.0,  -5.0,   0.0),
+#     ( 10.0,   10.0,  -5.0,   0.0),
+#     ( 0.0,   10.0,  -5.0,   0.0),
+#     (  0.0,   0.0,  -5.0,  0.0)
+# ]
+# DEFAULT_WAYPOINTS = [
+#     # wheel
+#     (  3.0,   0.0,  -5.0,  0.0),
+#     (  1.6,   2.6,  -5.0,  0.0),
+#     ( -0.8,   2.9,  -5.0,  0.0),
+#     ( -2.8,   0.4,  -5.0,  0.0),
+#     ( -2.8,  -0.4,  -5.0,  0.0),
+#     ( -0.8,  -2.9,  -5.0,  0.0),
+
+#     # barrel out
+#     (  3.0,   0.0,  -5.0,  0.0),
+#     (  5.0,   0.0,  -5.0,  0.0),
+#     (  7.0,   0.0,  -5.0,  0.0),
+#     (  9.0,   0.0,  -5.0,  0.0),
+#     ( 11.0,   0.0,  -5.0,  0.0),
+
+#     # cannonball returning
+#     (  9.0,   1.5,  -5.0,  0.0),
+#     (  7.0,   3.0,  -5.0,  0.0),
+#     (  5.0,   2.0,  -5.0,  0.0),
+#     (  0.0,   0.0,  -5.0,  0.0),
+# ]
 # Helpers
 def unit(v):
     n = np.linalg.norm(v)
@@ -85,6 +117,14 @@ class PurePursuitMission(Node):
         self.L_start            = 0.0
         self.t_transition_start = 0.0
 
+        # QoS 
+        px4_qos = QoSProfile(
+            reliability = ReliabilityPolicy.BEST_EFFORT,
+            durability = DurabilityPolicy.VOLATILE,
+            history = HistoryPolicy.KEEP_LAST,
+            depth = 5
+        )
+
         self.clock = self.get_clock()
 
         self.get_logger().info(f"MissionPlanner | source={source} | L={self.max_lookahead} m | waypoint_radius={self.waypoint_radius} m | rate={publish_rate} Hz")
@@ -93,9 +133,12 @@ class PurePursuitMission(Node):
         if source == 'local':
             self.create_subscription(
                 PoseStamped, '/mavros/local_position/pose', self.local_pos_callback, 10)
-        else:
+        elif source == 'vicon':
             self.create_subscription(
                 PoseStamped, 'vicon_pose', self.vicon_pos_callback, 10)
+        elif source == 'px4':
+            self.create_subscription(
+                VehicleOdometry, '/fmu/out/vehicle_odometry', self.px4_odometry_callback, px4_qos)
 
         self.create_subscription( # Radio: append waypoint "x,y,z,yaw"
             String, 'uav/radio_in/target_waypoint', self.radio_waypoint_callback, 10)
@@ -113,7 +156,11 @@ class PurePursuitMission(Node):
 
         # State
         self.pos = np.zeros(3)  # Current position [x, y, z]
-        self.mission_active = False
+
+        if source == 'px4':
+            self.mission_active = True
+        else:
+            self.mission_active = False
 
         # Loop timer
         dt = 1.0 / publish_rate
@@ -122,15 +169,20 @@ class PurePursuitMission(Node):
         self.get_logger().info('MissionPlanner node started — send "start" to begin')
 
     # Callbacks
-    def local_pos_callback(self, msg: PoseStamped):
+    def local_pos_callback(self, msg):
         self.pos[:] = [msg.pose.position.x,
                        msg.pose.position.y,
                        msg.pose.position.z]
 
-    def vicon_pos_callback(self, msg: PoseStamped):
+    def vicon_pos_callback(self, msg):
         self.pos[:] = [msg.pose.position.x,
                        msg.pose.position.y,
                        msg.pose.position.z]
+        
+    def px4_odometry_callback(self, msg):
+        self.pos[:] = [msg.position[0],
+                       msg.position[1],
+                       msg.position[2]]
 
     def radio_waypoint_callback(self, msg: String):
         """Append a waypoint received over radio as 'x,y,z,yaw'."""
@@ -195,7 +247,7 @@ class PurePursuitMission(Node):
         # Lookahead computation
         dist_CP_B = np.linalg.norm(closest_point - B)
         dt = t - self.t_transition_start
-        self.current_lookahead = min(dist_CP_B, min(self.max_lookahead, self.L_start + self.L_ramp_rate * dt)) # Lookahead distance
+        self.current_lookahead = min(self.max_lookahead, self.L_start + self.L_ramp_rate * dt) # Lookahead distance
 
         # Mode
         if self.mode == "TRACK":
@@ -203,16 +255,16 @@ class PurePursuitMission(Node):
             if dist_to_B <= self.max_lookahead:
                 self.mode = "APPROACH"
         elif self.mode == "APPROACH":
-            ref_out = B
+            ref_out = B.copy()
             if dist_to_B <= self.waypoint_radius:
                 self.mode = "TRANSITION"
                 self.t_transition_start = t
         elif self.mode == "TRANSITION":
             if has_next:
                 ref_out = B + unit(C - B) * self.current_lookahead
+                _, lookahead_distance_along_seg_BC = project_point_to_segment(ref_out, B, C)
             else:
                 ref_out = B.copy()
-            _, lookahead_distance_along_seg_BC = project_point_to_segment(ref_out, B, C)
             if has_next and (d_BC < d_AB) and distance_along_seg_BC < lookahead_distance_along_seg_BC:
                 self.t_transition_start = t
                 self.seg_idx += 1

@@ -210,3 +210,5 @@ AMENT_IGNORE
 
 # End of https://www.toptal.com/developers/gitignore/api/ros2,python
 ros2_ws.code-workspace
+
+Drone_ws/src/px4_msgs/

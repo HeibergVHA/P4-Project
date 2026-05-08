@@ -37,6 +37,7 @@ setup(
         'vicon_node = PLC.vicon_node:main',
         'Lidar_collection = PLC.LidarCollection:main',
         'radio_node = PLC.radio_node:main',
+        'plotter = PLC.plotter:main',
         ],
     },
 )

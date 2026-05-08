@@ -1,7 +1,15 @@
-<CycloneDDS>
+<!-- <CycloneDDS>
   <Domain>
     <General>
       <NetworkInterfaceAddress>lo</NetworkInterfaceAddress>
+    </General>
+  </Domain>
+</CycloneDDS> -->
+
+<CycloneDDS>
+  <Domain>
+    <General>
+      <AllowMulticast>true</AllowMulticast>
     </General>
   </Domain>
 </CycloneDDS>
