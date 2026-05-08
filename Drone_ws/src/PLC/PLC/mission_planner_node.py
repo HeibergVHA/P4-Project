@@ -116,6 +116,8 @@ class PurePursuitMission(Node):
             depth = 5
         )
 
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+
         self.clock = self.get_clock()
 
         self.get_logger().info(f"MissionPlanner | source={source} | L={self.max_lookahead} m | waypoint_radius={self.waypoint_radius} m | rate={publish_rate} Hz")
@@ -123,7 +125,7 @@ class PurePursuitMission(Node):
         # Subscribers
         if source == 'local':
             self.create_subscription(
-                PoseStamped, '/mavros/local_position/pose', self.local_pos_callback, 10)
+                PoseStamped, '/mavros/local_position/pose', self.local_pos_callback, qos)
         elif source == 'vicon':
             self.create_subscription(
                 PoseStamped, 'vicon_pose', self.vicon_pos_callback, 10)
