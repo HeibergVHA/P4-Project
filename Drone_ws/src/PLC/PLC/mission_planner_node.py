@@ -151,7 +151,7 @@ class PurePursuitMission(Node):
         if source == 'px4':
             self.mission_active = True
         else:
-            self.mission_active = False
+            self.mission_active = True
 
         # Loop timer
         dt = 1.0 / publish_rate
