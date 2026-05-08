@@ -6,12 +6,12 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
-try:
-    from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
-    OffboardControlMode, VehicleCommand
-    PX4_AVAILABLE = True
-except ImportError:
-    PX4_AVAILABLE = False
+# try:
+#     from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
+#     OffboardControlMode, VehicleCommand
+#     PX4_AVAILABLE = True
+# except ImportError:
+#     PX4_AVAILABLE = False
 
 
 # ros2 run <package> mission_planner_node --ros-args -p input_source:=local lookahead_dist:=2.0 waypoint_radius:=1.0 publish_rate:=50.0
@@ -127,9 +127,9 @@ class PurePursuitMission(Node):
         elif source == 'vicon':
             self.create_subscription(
                 PoseStamped, 'vicon_pose', self.vicon_pos_callback, 10)
-        elif source == 'px4':
-            self.create_subscription(
-                VehicleOdometry, '/fmu/out/vehicle_odometry', self.px4_odometry_callback, px4_qos)
+        # elif source == 'px4':
+        #     self.create_subscription(
+        #         VehicleOdometry, '/fmu/out/vehicle_odometry', self.px4_odometry_callback, px4_qos)
 
         self.create_subscription( # Radio: append waypoint "x,y,z,yaw"
             String, 'uav/radio_in/target_waypoint', self.radio_waypoint_callback, 10)
