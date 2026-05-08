@@ -6,7 +6,7 @@
     # ── Preprocessing ──────────────────────────────────────────────────────
     # Voxel grid leaf size (metres).
     # Smaller  → more detail, slower.  Larger → faster, less accurate.
-    voxel_size: 0.05
+    voxel_size: 0.02 # 0.05
  
     # Normal estimation search radius = normal_radius_mult × voxel_size
     normal_radius_mult: 2.0
