@@ -25,6 +25,11 @@ from pathlib import Path
 # Custom Interfaces 
 from threshold_interfaces.srv import SetThresholds
 
+# ROS2 Node that generates costmaps from a LiDAR point cloud stored in a PCD file.
+from sensor_msgs.msg import PointCloud2, PointField
+from std_msgs.msg import Header
+from sensor_msgs_py import point_cloud2
+
 
 class LidarCostmapGenerator(Node):
     
@@ -37,7 +42,7 @@ class LidarCostmapGenerator(Node):
         #self.declare_parameter('pcd_file_path',
         #    '/home/jesper-kwame-jensen/Desktop/P4-Project/UGV_ws/src/Cost_Map/PCD_File/scans.pcd')
         #ros2_ws/PCD/name.pcd
-        self.declare_parameter('pcd_file_path', 'Cost_Map/resource/WALLR1.pcd')  # <-- Update this path to your PCD file
+        self.declare_parameter('pcd_file_path', 'src/Cost_Map/resource/WALLR2.pcd')  # <-- Update this path to your PCD file
         self.declare_parameter('map_frame_id',            'map')
         self.declare_parameter('costmap_resolution',      0.05)
         self.declare_parameter('inflation_radius_meters', 0.05)
@@ -65,6 +70,7 @@ class LidarCostmapGenerator(Node):
         self.publisher_master_costmap    = self.create_publisher(OccupancyGrid, '/master_costmap', qos)
         self.publisher_static_costmap    = self.create_publisher(OccupancyGrid, '/static_costmap', qos)
         self.publisher_inflation_costmap = self.create_publisher(OccupancyGrid, '/inflation_costmap', qos)
+        self.publisher_pointcloud = self.create_publisher(PointCloud2, '/pointcloud', qos)
 
         # Static TF so RViz2 can resolve the 'map' frame
         self._tf_broadcaster = StaticTransformBroadcaster(self)
@@ -164,6 +170,49 @@ class LidarCostmapGenerator(Node):
         has_data = grid_z_counts > 0
         return elevation_map, has_data
 
+
+    def publish_pointcloud(self, points):
+        """
+        Publish Nx3 numpy array as ROS2 PointCloud2
+        """
+
+        header = Header()
+        header.stamp = self.get_clock().now().to_msg()
+        header.frame_id = self.map_frame_id
+
+        fields = [
+            PointField(
+               name='x',
+                offset=0,
+                datatype=PointField.FLOAT32,
+                count=1
+            ),
+            PointField(
+                name='y',
+                offset=4,
+                datatype=PointField.FLOAT32,
+                count=1
+            ),
+            PointField(
+                name='z',
+                offset=8,
+                datatype=PointField.FLOAT32,
+                count=1
+            ),
+        ]
+
+        cloud_msg = point_cloud2.create_cloud(
+            header,
+            fields,
+            points.astype(np.float32)
+        )
+
+        self.publisher_pointcloud.publish(cloud_msg)
+
+        self.get_logger().info(
+            f"Published point cloud with {len(points)} points"
+        )
+
     #  Service handler
     def generate_costmaps_service(self, request, response):
 
@@ -173,6 +222,9 @@ class LidarCostmapGenerator(Node):
             response.success = False
             response.message = "Failed to load PCD — check pcd_file_path."
             return response
+        
+        # Publish the point cloud for visualization (optional, but helpful for debugging and RViz2 visualization)
+        self.publish_pointcloud(points)
 
         # Grid size 
         width_cells  = int((max_bound[0] - min_bound[0]) / self.costmap_resolution) + 1
@@ -298,7 +350,6 @@ class LidarCostmapGenerator(Node):
         except Exception as e:
             self.get_logger().error(f"Failed to save costmap: {e}")
 
-    
 
 
 def main(args=None):
