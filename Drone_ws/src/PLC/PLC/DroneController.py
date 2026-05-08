@@ -281,7 +281,7 @@ class DroneController(Node):
 
 
     def _control_loop_mavros(self):
-        if not self.current_state.guided or not self.current_state.armed: # Check if drone is ARMED and in correct flight mode
+        if not self.current_state.armed: # Check if drone is ARMED and in correct flight mode # not self.current_state.guided or 
             return
         
         self.phi_x = self.x_controller.update(self.target_x, self.current_x)
