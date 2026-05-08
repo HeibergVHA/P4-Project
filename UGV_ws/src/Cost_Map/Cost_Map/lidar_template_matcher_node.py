@@ -1,272 +1,224 @@
 #!/usr/bin/env python3
+"""
+Lidar Template Matcher Node
+============================
+Triggered by a ROS2 service call. Loads a scene PCD and a template PCD,
+then finds the 6-DOF pose of the template object (RC car) in the scene.
 
-# ROS2 Core
-from unittest import result
+Pipeline:
+  1. Load & align scene floor to the XY-plane
+  2. Remove floor points
+  3. Z-height filter  (keep only car-height band)
+  4. FGR global registration  (coarse alignment)
+  5. Scene crop around FGR result  (prevents ICP from drifting)
+  6. Multi-scale ICP refinement  (fine alignment)
+  7. Publish pose + aligned point cloud
+
+Call the service:
+  ros2 service call /run_template_matching std_srvs/srv/Trigger '{}'
+"""
+
+import os
+import copy
+
+import numpy as np
+import open3d as o3d
 
 import rclpy
 from rclpy.node import Node
-
-# ROS2 Messages
-from geometry_msgs.msg import PoseStamped
-from std_srvs.srv import Trigger
-from sensor_msgs.msg import PointCloud2, PointField
-from std_msgs.msg import Header
-from sensor_msgs_py import point_cloud2
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
-# Third-Party Libraries
-import open3d as o3d
-import numpy as np
-import copy
-import os
+from geometry_msgs.msg import PoseStamped
+from sensor_msgs.msg import PointCloud2, PointField
+from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Header
+from std_srvs.srv import Trigger
 
-from ament_index_python.packages import (
-    get_package_share_directory,
-    PackageNotFoundError,
-)
+from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 
-# -------------------------------------------------------
-# ROS2 NODE
-# -------------------------------------------------------
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Node
+# ──────────────────────────────────────────────────────────────────────────────
 
 class LidarTemplateMatcherNode(Node):
 
     def __init__(self):
         super().__init__('lidar_template_matcher_node')
 
-        self.get_logger().info("Lidar Template Matcher Node Started")
-
-        # -------------------------------------------------------
-        # PARAMETERS
-        # -------------------------------------------------------
+        # ── Parameters ────────────────────────────────────────────────────────
 
         try:
-            package_share_directory = get_package_share_directory('Cost_Map')
+            pkg = get_package_share_directory('Cost_Map')
         except PackageNotFoundError:
-            package_share_directory = os.path.join(
-                os.getcwd(), 'src', 'Cost_Map')
+            pkg = os.path.join(os.getcwd(), 'src', 'Cost_Map')
 
-        default_scene = os.path.join(
-            package_share_directory,
-            'resource',
-            'WALLR1.pcd'
-        )
-        default_template = os.path.join(
-            package_share_directory,
-            'resource',
-            'rc_car_template.pcd'
-        )
+        self.declare_parameter('scene_file',
+            os.path.join(pkg, 'resource', 'WALLR1.pcd'))
+        self.declare_parameter('template_file',
+            os.path.join(pkg, 'resource', 'rc_car_template.pcd'))
 
-        self.declare_parameter('scene_file', default_scene)
-        self.declare_parameter('template_file', default_template)
-        self.declare_parameter('voxel_size', 0.05)
+        # Voxel leaf size (metres).
+        # 0.10 m works well for a 1.9 M-point scene — coarse enough for
+        # distinctive FPFH features, fine enough to resolve the car shape.
+        self.declare_parameter('voxel_size', 0.10)
 
-        self.scene_file = self.get_parameter(
-            'scene_file').get_parameter_value().string_value
+        # Z band to keep after floor removal (metres, relative to floor = 0).
+        # The RC-car template sits at z ≈ -0.50 → +0.18 before floor
+        # alignment, so a [-0.10, 1.50] band captures the car while
+        # discarding the ground and high clutter.
+        self.declare_parameter('z_min',  -0.10)
+        self.declare_parameter('z_max',   1.50)
 
-        self.template_file = self.get_parameter(
-            'template_file').get_parameter_value().string_value
+        # Expand the crop box around the FGR result before running ICP.
+        # Larger values are safer but slow ICP down.
+        self.declare_parameter('icp_crop_margin', 1.0)
 
-        self.voxel_size = self.get_parameter(
-            'voxel_size').get_parameter_value().double_value
+        self.scene_file    = self.get_parameter('scene_file').value
+        self.template_file = self.get_parameter('template_file').value
+        self.voxel_size    = self.get_parameter('voxel_size').value
+        self.z_min         = self.get_parameter('z_min').value
+        self.z_max         = self.get_parameter('z_max').value
+        self.icp_margin    = self.get_parameter('icp_crop_margin').value
 
-        # -------------------------------------------------------
-        # PUBLISHERS
-        # -------------------------------------------------------
+        # ── Publishers ────────────────────────────────────────────────────────
 
-        self.pose_publisher = self.create_publisher(
-            PoseStamped,
-            '/detected_object_pose',
-            10
-        )
+        self.pose_pub = self.create_publisher(PoseStamped, '/detected_object_pose', 10)
 
-        # QoS for RViz compatibility
+        # TRANSIENT_LOCAL so RViz2 receives the cloud even if it subscribes late
         qos = QoSProfile(depth=1)
         qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        self.cloud_pub = self.create_publisher(PointCloud2, '/pointcloud', qos)
 
-        self.publisher_pointcloud = self.create_publisher(
-            PointCloud2,
-            '/pointcloud',
-            qos
-        )
+        # ── Service ───────────────────────────────────────────────────────────
 
-        # -------------------------------------------------------
-        # SERVICES
-        # -------------------------------------------------------
-
-        self.service = self.create_service(
-            Trigger,
-            'run_template_matching',
-            self.run_matching_callback
-        )
+        self.srv = self.create_service(Trigger, 'run_template_matching',
+                                       self._match_callback)
 
         self.get_logger().info(
-            "Service ready → ros2 service call "
-            "/run_template_matching std_srvs/srv/Trigger '{}'"
+            'Ready — call:  ros2 service call /run_template_matching std_srvs/srv/Trigger \'{}\''
         )
 
-    # -------------------------------------------------------
-    # PREPROCESSING
-    # -------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
+    # Service callback — top-level orchestration
+    # ──────────────────────────────────────────────────────────────────────────
 
-    def preprocess_point_cloud(self, pcd, voxel_size):
-
-        self.get_logger().info("Downsampling point cloud...")
-
-        pcd_down = pcd.voxel_down_sample(voxel_size)
-
-        self.get_logger().info("Estimating normals...")
-
-        radius_normal = voxel_size * 2
-
-        pcd_down.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(
-                radius=radius_normal,
-                max_nn=50
-            )
-        )
-
-        self.get_logger().info("Computing FPFH features...")
-
-        radius_feature = voxel_size * 5
-
-        fpfh = o3d.pipelines.registration.compute_fpfh_feature(
-            pcd_down,
-            o3d.geometry.KDTreeSearchParamHybrid(
-                radius=radius_feature,
-                max_nn=100
-            )
-        )
-
-        return pcd_down, fpfh
-    
-    # PCD loading and processing
-    def load_pcd_and_process(self):
+    def _match_callback(self, request, response):
         try:
-            pcd = o3d.io.read_point_cloud(self.scene_file)
-            if not pcd.has_points():
-                self.get_logger().error(f"PCD file has no points: {o3d.io.read_point_cloud(self.scene_file)}")
-                return None, None, None, None
+            # 1. Load scene & rotate floor to XY plane
+            scene = self._load_scene()
 
-            points = np.asarray(pcd.points)
+            # 2. Remove floor plane
+            scene = self._remove_floor(scene)
 
-            points, T, plane_model = self.align_floor_to_xy_plane(points)
+            # 3. Z-height filter — discard ground noise and tall obstacles
+            scene = self._filter_z(scene)
 
-            pcd.points = o3d.utility.Vector3dVector(points)
+            # Publish the cleaned scene to RViz2
+            self._publish_cloud(np.asarray(scene.points))
 
-            """# Rotate 90° around Y to align sensor frame → map frame
-            # You can change this rotation if your PCD is already in the correct orientation, or if it uses a different convention.
-            theta = np.pi / 2
-            R = np.array([
-                [ np.cos(theta), 0, np.sin(theta)],
-                [ 0,             1, 0            ],
-                [-np.sin(theta), 0, np.cos(theta)],
-            ])
-            points = points @ R.T"""
+            # 4. Load & downsample template
+            template = self._load_template()
 
-            min_bound = points.min(axis=0)
-            max_bound = points.max(axis=0)
-            self.get_logger().info(f"Loaded {len(points)} points. min={min_bound[:2]}  max={max_bound[:2]}")
+            # 5. Compute FPFH features for both clouds
+            scene_down,    scene_fpfh    = self._preprocess(scene)
+            template_down, template_fpfh = self._preprocess(template)
 
-            pcd.points = o3d.utility.Vector3dVector(points)
+            self.get_logger().info(
+                f'Scene: {len(scene_down.points)} pts  |  '
+                f'Template: {len(template_down.points)} pts  (after voxel={self.voxel_size} m)'
+            )
 
-            return pcd, points, min_bound, max_bound
+            # 6. FGR global registration (coarse)
+            fgr = self._fgr(template_down, scene_down, template_fpfh, scene_fpfh)
+            self.get_logger().info(f'FGR   fitness={fgr.fitness:.4f}  rmse={fgr.inlier_rmse:.4f}')
+
+            # 7. Crop scene to FGR bounding box — keeps ICP from drifting
+            scene_cropped = self._crop_around_result(scene_down, template_down, fgr.transformation)
+            self.get_logger().info(
+                f'Scene cropped to {len(scene_cropped.points)} pts around FGR result'
+            )
+
+            # 8. Multi-scale ICP refinement (fine)
+            icp = self._icp(template_down, scene_cropped, fgr.transformation)
+            self.get_logger().info(f'ICP   fitness={icp.fitness:.4f}  rmse={icp.inlier_rmse:.4f}')
+
+            # Use ICP result if it improved on FGR, otherwise keep FGR
+            final_T = icp.transformation if icp.fitness >= fgr.fitness else fgr.transformation
+            self.get_logger().info(
+                f'Final translation: {final_T[:3, 3].round(3)}'
+            )
+
+            # 9. Publish pose
+            self._publish_pose(final_T)
+
+            response.success = True
+            response.message = (
+                f'Match complete. '
+                f'FGR fitness={fgr.fitness:.3f}  ICP fitness={icp.fitness:.3f}'
+            )
 
         except Exception as e:
-            self.get_logger().error(f"Failed to load PCD: {e}")
-            return None, None, None, None
+            self.get_logger().error(f'Matching failed: {e}')
+            response.success = False
+            response.message = str(e)
 
-    def remove_floor(
-            self,
-            pcd,
-            distance_threshold=0.03,
-            ransac_n=3,
-            num_iterations=2000):
+        return response
 
-        original_points = len(pcd.points)
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 1 — Load scene and align floor to Z=0
+    # ──────────────────────────────────────────────────────────────────────────
 
-        plane_model, inliers = pcd.segment_plane(
-            distance_threshold=distance_threshold,
-            ransac_n=ransac_n,
-            num_iterations=num_iterations
-        )
+    def _load_scene(self) -> o3d.geometry.PointCloud:
+        pcd = o3d.io.read_point_cloud(self.scene_file)
+        if not pcd.has_points():
+            raise RuntimeError(f'Scene PCD has no points: {self.scene_file}')
 
-        self.get_logger().info(
-            f"Floor plane inliers: {len(inliers)}"
-        )
-
-        no_floor = pcd.select_by_index(
-            inliers,
-            invert=True
-        )
+        pts = np.asarray(pcd.points, dtype=np.float64)
+        pts, _ = self._align_floor(pts)
+        pcd.points = o3d.utility.Vector3dVector(pts)
 
         self.get_logger().info(
-            f"Remaining points after floor removal: "
-            f"{len(no_floor.points)} / {original_points}"
+            f'Scene loaded: {len(pts):,} pts  '
+            f'X=[{pts[:,0].min():.2f}, {pts[:,0].max():.2f}]  '
+            f'Z=[{pts[:,2].min():.2f}, {pts[:,2].max():.2f}]'
         )
+        return pcd
 
-        return no_floor
-
-    def align_floor_to_xy_plane(
-            self,
-            points,
-            distance_threshold=0.02,
-            ransac_n=3,
-            num_iterations=1000):
-
-        # Accept Open3D point clouds directly
-        if isinstance(points, o3d.geometry.PointCloud):
-            points = np.asarray(points.points)
-
-        points = np.asarray(points, dtype=np.float64)
-
+    def _align_floor(self, points: np.ndarray):
+        """
+        Fit a plane to the dominant flat surface (floor), rotate so that
+        plane normal points along +Z, then shift so floor sits at Z=0.
+        Returns (rotated_points, 4×4_transform).
+        """
         pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(
-            np.asarray(points, dtype=np.float64)
-        )
+        pcd.points = o3d.utility.Vector3dVector(points)
 
         plane_model, inliers = pcd.segment_plane(
-            distance_threshold=distance_threshold,
-            ransac_n=ransac_n,
-            num_iterations=num_iterations
-        )
+            distance_threshold=0.02, ransac_n=3, num_iterations=1000)
 
         a, b, c, d = plane_model
-
         normal = np.array([a, b, c], dtype=np.float64)
         normal /= np.linalg.norm(normal)
 
-        # Force consistent floor orientation
-        if abs(normal[0]) > abs(normal[1]):
-            if normal[0] < 0:
-                normal *= -1
-        else:
-            if normal[1] < 0:
-                normal *= -1
-
+        # Make the normal point upward (toward +Z)
         if normal[2] < 0:
             normal *= -1
-            d *= -1
 
+        # Rodrigues rotation: normal → [0, 0, 1]
         target = np.array([0.0, 0.0, 1.0])
-
         v = np.cross(normal, target)
         s = np.linalg.norm(v)
-        c = np.dot(normal, target)
 
         if s < 1e-8:
             R = np.eye(3)
         else:
-            vx = np.array([
-                [0, -v[2], v[1]],
-                [v[2], 0, -v[0]],
-                [-v[1], v[0], 0]
-            ])
-
-            R = np.eye(3) + vx + vx @ vx * ((1 - c) / (s ** 2))
+            vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+            R = np.eye(3) + vx + vx @ vx * ((1 - np.dot(normal, target)) / s ** 2)
 
         rotated = (R @ points.T).T
 
+        # Translate so the floor plane sits exactly at Z=0
         floor_z = np.mean(rotated[inliers, 2])
         rotated[:, 2] -= floor_z
 
@@ -274,452 +226,215 @@ class LidarTemplateMatcherNode(Node):
         T[:3, :3] = R
         T[2, 3] = -floor_z
 
-        return rotated, T, plane_model
+        return rotated, T
 
-    # -------------------------------------------------------
-    # GLOBAL REGISTRATION
-    # -------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 2 — Remove floor plane
+    # ──────────────────────────────────────────────────────────────────────────
 
-    '''def execute_global_registration(
-        self,
-        source_down,
-        target_down,
-        source_fpfh,
-        target_fpfh,
-        voxel_size
-    ):
+    def _remove_floor(self, pcd: o3d.geometry.PointCloud,
+                      dist_thresh=0.03) -> o3d.geometry.PointCloud:
+        """
+        Segment the dominant plane (floor) and return only the non-floor points.
+        After _align_floor the floor is at Z≈0, so a tight threshold works well.
+        """
+        _, inliers = pcd.segment_plane(
+            distance_threshold=dist_thresh, ransac_n=3, num_iterations=2000)
 
-        distance_threshold = voxel_size * 1.5
-
-        self.get_logger().info("Running RANSAC registration...")
-
-        result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
-            source_down,
-            target_down,
-            source_fpfh,
-            target_fpfh,
-            mutual_filter=True,
-            max_correspondence_distance=distance_threshold,
-
-            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(
-                False
-            ),
-
-            ransac_n=4,
-
-            checkers=[
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(
-                    0.9
-                ),
-
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(
-                    distance_threshold
-                )
-            ],
-
-            criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(
-                100000,
-                0.999
-            )
-        )
-
-        return result'''
-
-    def execute_global_registration(
-        self,
-        source_down,
-        target_down,
-        source_fpfh,
-        target_fpfh,
-        voxel_size
-    ):
-
-        distance_threshold = voxel_size * 0.5
+        no_floor = pcd.select_by_index(inliers, invert=True)
 
         self.get_logger().info(
-            "Running Fast Global Registration..."
+            f'Floor removal: {len(inliers)} floor pts removed, '
+            f'{len(no_floor.points)} remaining'
         )
+        return no_floor
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 3 — Z-height filter
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _filter_z(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+        """
+        Keep only points within [z_min, z_max] above the floor.
+
+        Why this matters for WALLR1.pcd:
+          - 1.93 M points spread across Z = -7 → +4 m
+          - The RC car sits in Z ≈ 0 → 0.7 m (after floor alignment)
+          - Wall returns, ceiling, and ground noise outside this band
+            pollute FPFH features and pull ICP to the wrong solution
+        """
+        pts = np.asarray(pcd.points)
+        mask = (pts[:, 2] >= self.z_min) & (pts[:, 2] <= self.z_max)
+        filtered = pcd.select_by_index(np.where(mask)[0])
+
+        self.get_logger().info(
+            f'Z-filter [{self.z_min:.2f}, {self.z_max:.2f}] m: '
+            f'{len(pcd.points):,} → {len(filtered.points):,} pts'
+        )
+        return filtered
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 4 — Load & downsample template
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _load_template(self) -> o3d.geometry.PointCloud:
+        pcd = o3d.io.read_point_cloud(self.template_file)
+        if not pcd.has_points():
+            raise RuntimeError(f'Template PCD has no points: {self.template_file}')
+
+        # The template already has pre-computed normals (x y z nx ny nz),
+        # but we re-estimate them after downsampling for consistency.
+        pcd = pcd.voxel_down_sample(self.voxel_size)
+        return pcd
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 5 — Preprocessing: normals + FPFH features
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _preprocess(self, pcd: o3d.geometry.PointCloud):
+        """
+        Downsample → estimate normals → compute FPFH features.
+        Returns (downsampled_pcd, fpfh_feature).
+        """
+        down = pcd.voxel_down_sample(self.voxel_size)
+
+        # Normal search radius: 2× voxel gives stable normals without being
+        # too local (noisy) or too global (smoothed over edges)
+        down.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(
+                radius=self.voxel_size * 2, max_nn=50))
+
+        # Consistent orientation — required for Point-to-Plane ICP
+        down.orient_normals_consistent_tangent_plane(k=15)
+
+        # FPFH radius: 5× voxel captures enough neighbourhood context for
+        # distinctive descriptors; 100 neighbours caps memory usage
+        fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+            down,
+            o3d.geometry.KDTreeSearchParamHybrid(
+                radius=self.voxel_size * 5, max_nn=100))
+
+        return down, fpfh
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 6 — FGR global registration (coarse)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _fgr(self, src_down, tgt_down, src_fpfh, tgt_fpfh):
+        """
+        Fast Global Registration — faster and often more robust than RANSAC
+        for partial-overlap scenes like a single object in a large map.
+
+        distance_threshold = 0.5 × voxel_size is intentionally tight here
+        because FGR uses tuple constraints internally; too loose causes false
+        correspondences on a dense scene.
+        """
         result = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
-            source_down,
-            target_down,
-            source_fpfh,
-            target_fpfh,
+            src_down, tgt_down, src_fpfh, tgt_fpfh,
             o3d.pipelines.registration.FastGlobalRegistrationOption(
-                maximum_correspondence_distance=distance_threshold,
-                iteration_number=128,
-                maximum_tuple_count=1000,
+                maximum_correspondence_distance=self.voxel_size * 0.5,
+                iteration_number=256,        # more iterations → more reliable
+                maximum_tuple_count=2000,    # more tuples → better constraints
                 tuple_scale=0.95,
-                tuple_test=True
+                tuple_test=True,
             )
         )
+        return result
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 7 — Crop scene around FGR result
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _crop_around_result(self, scene_down, template_down,
+                             transform: np.ndarray) -> o3d.geometry.PointCloud:
+        """
+        Transform the template into the scene frame using the FGR result,
+        compute its axis-aligned bounding box, expand it by icp_margin, and
+        return only the scene points inside that box.
+
+        Without this step ICP sees the entire 1.9 M-point scene and drifts
+        toward the nearest dense cluster instead of refining the car match.
+        """
+        tmpl_in_scene = copy.deepcopy(template_down)
+        tmpl_in_scene.transform(transform)
+
+        bbox = tmpl_in_scene.get_axis_aligned_bounding_box()
+        bbox.min_bound = bbox.min_bound - self.icp_margin
+        bbox.max_bound = bbox.max_bound + self.icp_margin
+
+        return scene_down.crop(bbox)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 8 — Multi-scale ICP refinement (fine)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _icp(self, src, tgt, init_T: np.ndarray):
+        """
+        Run ICP three times at decreasing correspondence distances
+        (coarse → medium → fine).  Starting loose avoids the local-minimum
+        trap that caused ICP to degrade the FGR result in earlier testing.
+        """
+        T = init_T
+        for scale in [4.0, 2.0, 1.0]:
+            dist = self.voxel_size * scale
+            result = o3d.pipelines.registration.registration_icp(
+                src, tgt,
+                max_correspondence_distance=dist,
+                init=T,
+                estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                criteria=o3d.pipelines.registration.ICPConvergenceCriteria(
+                    relative_fitness=1e-6, relative_rmse=1e-6, max_iteration=100),
+            )
+            T = result.transformation
 
         return result
 
-    # -------------------------------------------------------
-    # ICP REFINEMENT
-    # -------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
+    # Publishers
+    # ──────────────────────────────────────────────────────────────────────────
 
-    def refine_registration(
-        self,
-        source,
-        target,
-        initial_transform,
-        voxel_size
-    ):
-
-        distance_threshold = voxel_size * 0.4
-
-        self.get_logger().info("Running ICP refinement...")
-
-        result = o3d.pipelines.registration.registration_icp(
-            source,
-            target,
-            distance_threshold,
-            initial_transform,
-            o3d.pipelines.registration.TransformationEstimationPointToPlane()
-        )
-
-        return result
-
-    # -------------------------------------------------------
-    # VALIDATION
-    # -------------------------------------------------------
-
-    def validate_match(self, result, template, voxel_size):
-
-        fitness = result.fitness
-        rmse = result.inlier_rmse
-
-        num_template_points = len(template.points)
-        estimated_inliers = fitness * num_template_points
-
-        self.get_logger().info(
-            f"Fitness: {fitness:.3f}"
-        )
-
-        self.get_logger().info(
-            f"RMSE: {rmse:.4f}"
-        )
-
-        self.get_logger().info(
-            f"Estimated inliers: {estimated_inliers:.0f}"
-        )
-
-        MIN_FITNESS = 0.3
-        MAX_RMSE = voxel_size * 0.5
-        MIN_INLIERS = 500
-
-        if fitness < MIN_FITNESS:
-            self.get_logger().warn("Rejected: Low fitness")
-            return False
-
-        if rmse > MAX_RMSE:
-            self.get_logger().warn("Rejected: High RMSE")
-            return False
-
-        if estimated_inliers < MIN_INLIERS:
-            self.get_logger().warn("Rejected: Too few inliers")
-            return False
-
-        self.get_logger().info("Match accepted")
-        return True
-
-    # -------------------------------------------------------
-    # PUBLISH DETECTED POSE
-    # -------------------------------------------------------
-
-    def publish_pointcloud(self, points, frame_id="map"):
-        """
-        Publish Nx3 numpy array as ROS2 PointCloud2
-        """
-
-        points = np.asarray(points, dtype=np.float32)
-
+    def _publish_cloud(self, points: np.ndarray, frame_id='map'):
+        """Publish an Nx3 float32 array as sensor_msgs/PointCloud2."""
+        points = points.astype(np.float32)
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
         header.frame_id = frame_id
 
         fields = [
-            PointField(
-                name='x',
-                offset=0,
-                datatype=PointField.FLOAT32,
-                count=1
-            ),
-            PointField(
-                name='y',
-                offset=4,
-                datatype=PointField.FLOAT32,
-                count=1
-            ),
-            PointField(
-                name='z',
-                offset=8,
-                datatype=PointField.FLOAT32,
-                count=1
-            ),
+            PointField(name='x', offset=0,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8,  datatype=PointField.FLOAT32, count=1),
         ]
+        msg = point_cloud2.create_cloud(header, fields, points)
+        self.cloud_pub.publish(msg)
+        self.get_logger().info(f'Published cloud: {len(points)} pts → /pointcloud')
 
-        cloud_msg = point_cloud2.create_cloud(
-            header,
-            fields,
-            points
-        )
-
-        self.publisher_pointcloud.publish(cloud_msg)
-
-        self.get_logger().info(
-            f"Published point cloud with {len(points)} points"
-        )
-
-    def publish_pose(self, transformation):
-
-        translation = transformation[:3, 3]
-
+    def _publish_pose(self, T: np.ndarray, frame_id='map'):
+        """Publish the 4×4 transform as geometry_msgs/PoseStamped (identity quaternion)."""
         msg = PoseStamped()
-
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "map"
-
-        msg.pose.position.x = float(translation[0])
-        msg.pose.position.y = float(translation[1])
-        msg.pose.position.z = float(translation[2])
-
-        # Identity quaternion
-        msg.pose.orientation.w = 1.0
-
-        self.pose_publisher.publish(msg)
-
+        msg.header.frame_id = frame_id
+        msg.pose.position.x = float(T[0, 3])
+        msg.pose.position.y = float(T[1, 3])
+        msg.pose.position.z = float(T[2, 3])
+        msg.pose.orientation.w = 1.0   # TODO: extract quaternion from T[:3,:3] if needed
+        self.pose_pub.publish(msg)
         self.get_logger().info(
-            f"Published pose: "
-            f"x={translation[0]:.2f}, "
-            f"y={translation[1]:.2f}, "
-            f"z={translation[2]:.2f}"
+            f'Published pose: x={T[0,3]:.3f}  y={T[1,3]:.3f}  z={T[2,3]:.3f}'
         )
 
-    # -------------------------------------------------------
-    # VISUALIZATION
-    # -------------------------------------------------------
 
-    def visualize_match(self, template, scene, transformation):
-
-        template_temp = copy.deepcopy(template)
-        scene_temp = copy.deepcopy(scene)
-
-        template_temp.paint_uniform_color([1, 0, 0])
-        scene_temp.paint_uniform_color([0.7, 0.7, 0.7])
-
-        template_temp.transform(transformation)
-
-        o3d.visualization.draw_geometries([
-            template_temp,
-            scene_temp
-        ])
-
-    # -------------------------------------------------------
-    # SERVICE CALLBACK
-    # -------------------------------------------------------
-
-    def run_matching_callback(self, request, response):
-
-        try:
-
-            self.get_logger().info("Loading point clouds...")
-
-            scene, points, min_bound, max_bound = self.load_pcd_and_process()
-            template = o3d.io.read_point_cloud(self.template_file)
-            
-            template = template.voxel_down_sample(
-                self.voxel_size
-            )
-
-            # -------------------------------------------------------
-            # REMOVE FLOOR
-            # -------------------------------------------------------
-
-            scene = self.remove_floor(
-                scene,
-                distance_threshold=0.015
-            )
-
-            # Convert back to numpy for RViz publishing
-            scene_no_floor_points = np.asarray(scene.points)
-
-            self.get_logger().info(
-                f"Scene after floor removal: "
-                f"{len(scene_no_floor_points)} points"
-            )
-
-            scene.estimate_normals(
-                o3d.geometry.KDTreeSearchParamHybrid(
-                    radius=self.voxel_size * 2,
-                    max_nn=30
-                )
-            )
-
-            template.estimate_normals(
-                o3d.geometry.KDTreeSearchParamHybrid(
-                    radius=self.voxel_size * 2,
-                    max_nn=30
-                )
-            )
-
-
-            # -------------------------------------------------------
-            # Publish FLOOR-REMOVED cloud to RViz2
-            # -------------------------------------------------------
-            # 
-            self.publish_pointcloud(
-                scene_no_floor_points,
-                frame_id="world"
-            )
-
-            if not scene.has_points():
-                response.success = False
-                response.message = "Scene point cloud empty"
-                return response
-
-            if not template.has_points():
-                response.success = False
-                response.message = "Template point cloud empty"
-                return response
-
-            self.get_logger().info(
-                f"Scene points: {len(scene.points)}"
-            )
-
-            self.get_logger().info(
-                f"Template points: {len(template.points)}"
-            )
-
-            # -------------------------------------------------------
-            # PREPROCESS
-            # -------------------------------------------------------
-
-            scene_down, scene_fpfh = self.preprocess_point_cloud(
-                scene,
-                self.voxel_size
-            )
-
-            template_down, template_fpfh = self.preprocess_point_cloud(
-                template,
-                self.voxel_size
-            )
-
-            # -------------------------------------------------------
-            # GLOBAL REGISTRATION
-            # -------------------------------------------------------
-
-            result_ransac = self.execute_global_registration(
-                template_down,
-                scene_down,
-                template_fpfh,
-                scene_fpfh,
-                self.voxel_size
-            )
-
-            self.get_logger().info(
-                f"RANSAC fitness: {result_ransac.fitness}"
-            )
-
-            self.get_logger().info(
-                f"RANSAC RMSE: {result_ransac.inlier_rmse}"
-            )
-
-            # -------------------------------------------------------
-            # ICP REFINEMENT
-            # -------------------------------------------------------
-
-            result_icp = self.refine_registration(
-                template,
-                scene,
-                result_ransac.transformation,
-                self.voxel_size
-            )
-
-            self.get_logger().info(
-                f"ICP fitness: {result_icp.fitness}"
-            )
-
-            self.get_logger().info(
-                f"ICP RMSE: {result_icp.inlier_rmse}"
-            )
-
-            # -------------------------------------------------------
-            # VALIDATION
-            # -------------------------------------------------------
-
-            """valid = self.validate_match(
-                result_icp,
-                template,
-                self.voxel_size
-            )
-
-            if not valid:
-
-                response.success = False
-                response.message = "Template match rejected"
-
-                return response"""
-
-            # -------------------------------------------------------
-            # PUBLISH POSE
-            # -------------------------------------------------------
-
-            self.publish_pose(result_ransac.transformation)
-
-            self.get_logger().info(
-                f"RANSAC translation: "
-                f"{result_ransac.transformation[:3, 3]}"
-            )
-
-            self.get_logger().info(
-                f"ICP translation: "
-                f"{result_icp.transformation[:3, 3]}"
-            )
-
-            # -------------------------------------------------------
-            # VISUALIZATION
-            # -------------------------------------------------------
-
-            """self.visualize_match(
-                template,
-                scene,
-                result_icp.transformation
-            )"""
-
-            response.success = True
-            response.message = "Template matching completed"
-
-            return response
-
-        except Exception as e:
-
-            self.get_logger().error(f"Matching failed: {e}")
-
-            response.success = False
-            response.message = str(e)
-
-            return response
-
-
-# -------------------------------------------------------
-# MAIN
-# -------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry point
+# ──────────────────────────────────────────────────────────────────────────────
 
 def main(args=None):
-
     rclpy.init(args=args)
-
     node = LidarTemplateMatcherNode()
-
     try:
         rclpy.spin(node)
-
     except KeyboardInterrupt:
         pass
-
     finally:
         node.destroy_node()
         rclpy.shutdown()
