@@ -20,6 +20,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPo
 # Waypoint list: (x [m], y [m], z [m], yaw [deg])
 
 DEFAULT_WAYPOINTS = [
+    (  0.0,   0.0,  0.0,   0.0),
     (  0.0,   0.0,  2.0,   0.0),
     ( 10.0,   0.0,  2.0,   0.0),
     ( 10.0,  10.0,  2.0,  90.0),
