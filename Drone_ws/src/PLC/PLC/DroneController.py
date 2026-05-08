@@ -363,18 +363,18 @@ class DroneController(Node):
     #     self.get_logger().info('PX4 arm command sent')
 
     # def _px4_switch_offboard(self):
-        msg = VehicleCommand()
-        msg.command          = VehicleCommand.VEHICLE_CMD_DO_SET_MODE
-        msg.param1           = 1.0
-        msg.param2           = 6.0
-        msg.target_system    = 1
-        msg.target_component = 1
-        msg.source_system    = 1
-        msg.source_component = 1
-        msg.from_external    = True
-        msg.timestamp        = self.get_clock().now().nanoseconds // 1000
-        self.px4_cmd_pub.publish(msg)
-        self.get_logger().info('PX4 offboard mode command sent')
+        # msg = VehicleCommand()
+        # msg.command          = VehicleCommand.VEHICLE_CMD_DO_SET_MODE
+        # msg.param1           = 1.0
+        # msg.param2           = 6.0
+        # msg.target_system    = 1
+        # msg.target_component = 1
+        # msg.source_system    = 1
+        # msg.source_component = 1
+        # msg.from_external    = True
+        # msg.timestamp        = self.get_clock().now().nanoseconds // 1000
+        # self.px4_cmd_pub.publish(msg)
+        # self.get_logger().info('PX4 offboard mode command sent')
 
 
 
