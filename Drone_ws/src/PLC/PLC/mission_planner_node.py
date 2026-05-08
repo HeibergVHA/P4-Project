@@ -14,7 +14,7 @@ except ImportError:
     PX4_AVAILABLE = False
 
 
-# ros2 run <package> mission_planner_node --ros-args -p input_source:=local
+# ros2 run <package> mission_planner_node --ros-args -p input_source:=local lookahead_dist:=2.0 waypoint_radius:=1.0 publish_rate:=50.0
 
 
 # Waypoint list: (x [m], y [m], z [m], yaw [deg])
@@ -77,30 +77,22 @@ def project_point_to_segment(point, seg_point_a, seg_point_b):
     closest_point = seg_point_a + distance_along_seg * seg_ab
     return closest_point, distance_along_seg
 
-def yaw_to_quaternion_wxyz(yaw_deg):
-    """Level-flight quaternion for a given yaw angle degrees."""
+def yaw_to_quaternion_wxyz(yaw_deg): # Level-flight quaternion for a given yaw angle degrees.
     r = R.from_euler('z', yaw_deg, degrees=True)
     x, y, z, w = r.as_quat()   # scipy gives [x, y, z, w]
     return np.array([w, x, y, z])
 
-def slerp_yaw(yaw_a_deg, yaw_b_deg, t):
-    """Interpolate between two yaw angles (degrees) by fraction t in [0, 1]. Handles wraparound correctly."""
+def slerp_yaw(yaw_a_deg, yaw_b_deg, t): # Interpolate between two yaw angles (degrees) by fraction t in [0, 1]. Handles wraparound correctly
     t = float(np.clip(t, 0.0, 1.0))
     delta = (yaw_b_deg - yaw_a_deg + 180.0) % 360.0 - 180.0   # shortest arc
     return yaw_a_deg + t * delta
 
 
 class PurePursuitMission(Node):
-    """Parameters --->
-    input_source   : 'vicon' | 'local'
-    lookahead_dist : pure-pursuit lookahead distance [m]  (default 2.0)
-    waypoint_radius : waypoint arrival radius [m]          (default 1.0)
-    publish_rate   : Hz of the output topic               (default 50)"""
-
     def __init__(self):
         super().__init__('mission_planner')
 
-        self.declare_parameter('input_source',   'local')
+        self.declare_parameter('input_source',   'local') # Input/startup parameters
         self.declare_parameter('lookahead_dist',  2.0)
         self.declare_parameter('capture_radius',  1.0)
         self.declare_parameter('publish_rate',   50.0)
@@ -152,7 +144,7 @@ class PurePursuitMission(Node):
 
         # Waypoint list
         self.waypoints= [np.array([x, y, z, yaw], dtype=float) for x, y, z, yaw in DEFAULT_WAYPOINTS]
-        self.seg_idx = 0        # Index of the of the active segment. segment i goes from waypoints[i] → waypoints[i+1]
+        self.seg_idx = 0        # Index of the of the active segment. segment i goes from waypoints[i] to waypoints[i+1]
 
         # State
         self.pos = np.zeros(3)  # Current position [x, y, z]
