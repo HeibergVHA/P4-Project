@@ -1,3 +1,0 @@
-make px4_sitl gz_x500
-
-MicroXRCEAgent udp4 -p 8888
