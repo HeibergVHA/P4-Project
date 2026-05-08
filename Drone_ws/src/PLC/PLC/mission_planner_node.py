@@ -106,7 +106,6 @@ class PurePursuitMission(Node):
         self.hold_yaw           = 0.0
         self.mode               = "TRACK"
         self.current_lookahead  = 0.0
-        self.L_start            = 0.0
         self.t_transition_start = 0.0
 
         # QoS 
@@ -176,8 +175,7 @@ class PurePursuitMission(Node):
                        msg.position[1],
                        msg.position[2]]
 
-    def radio_waypoint_callback(self, msg: String):
-        """Append a waypoint received over radio as 'x,y,z,yaw'."""
+    def radio_waypoint_callback(self, msg): # Append a waypoint received over radio as 'x,y,z,yaw'.
         try:
             parts = [float(v) for v in msg.data.split(',')]
             if len(parts) != 4:
@@ -239,12 +237,12 @@ class PurePursuitMission(Node):
         # Lookahead computation
         dist_CP_B = np.linalg.norm(closest_point - B)
         dt = t - self.t_transition_start
-        self.current_lookahead = min(self.max_lookahead, self.L_start + self.L_ramp_rate * dt) # Lookahead distance
+        self.current_lookahead = min(self.max_lookahead, self.L_ramp_rate * dt) # Lookahead distance
 
         # Mode
         if self.mode == "TRACK":
             ref_out = closest_point + unit(B - A) * self.current_lookahead # Lookahead point
-            if dist_to_B <= self.max_lookahead:
+            if dist_CP_B <= self.max_lookahead:
                 self.mode = "APPROACH"
         elif self.mode == "APPROACH":
             ref_out = B.copy()
@@ -253,14 +251,14 @@ class PurePursuitMission(Node):
                 self.t_transition_start = t
         elif self.mode == "TRANSITION":
             if has_next:
-                ref_out = B + unit(C - B) * self.current_lookahead
+                ref_out = B.copy() + unit(C - B) * self.current_lookahead
                 _, lookahead_distance_along_seg_BC = project_point_to_segment(ref_out, B, C)
+                if (d_BC < d_AB) and distance_along_seg_BC < lookahead_distance_along_seg_BC or (d_BC < d_AB) and distance_along_seg_BC > self.max_lookahead:
+                    self.t_transition_start = t
+                    self.seg_idx += 1
+                    self.mode = "TRACK"
             else:
                 ref_out = B.copy()
-            if has_next and (d_BC < d_AB) and distance_along_seg_BC < lookahead_distance_along_seg_BC:
-                self.t_transition_start = t
-                self.seg_idx += 1
-                self.mode = "TRACK"
 
         # Yaw interpolation 
         yaw_A = self.waypoints[self.seg_idx][3] # Yaw at last waypoint
