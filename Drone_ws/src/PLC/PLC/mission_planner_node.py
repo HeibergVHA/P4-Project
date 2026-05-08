@@ -157,7 +157,7 @@ class PurePursuitMission(Node):
         dt = 1.0 / publish_rate
         self.create_timer(dt, self.control_loop)
 
-        self.get_logger().info('MissionPlanner node started — send "start" to begin')
+        self.get_logger().info('MissionPlanner node started — send "start", "pause", "resume", or "abort"')
 
     # Callbacks
     def local_pos_callback(self, msg):
@@ -244,10 +244,12 @@ class PurePursuitMission(Node):
             ref_out = closest_point + unit(B - A) * self.current_lookahead # Lookahead point
             if dist_CP_B <= self.max_lookahead:
                 self.mode = "APPROACH"
+                self.get_logger().info('Mode: APPROACH')
         elif self.mode == "APPROACH":
             ref_out = B.copy()
             if dist_to_B <= self.waypoint_radius:
                 self.mode = "TRANSITION"
+                self.get_logger().info('Mode: TRANSITION')
                 self.t_transition_start = t
         elif self.mode == "TRANSITION":
             if has_next:
@@ -257,6 +259,7 @@ class PurePursuitMission(Node):
                     self.t_transition_start = t
                     self.seg_idx += 1
                     self.mode = "TRACK"
+                    self.get_logger().info('Mode: TRACK')
             else:
                 ref_out = B.copy()
 
