@@ -286,7 +286,7 @@ class DroneController(Node):
         
         self.phi_x = self.x_controller.update(self.target_x, self.current_x)
         self.phi_y = self.y_controller.update(self.target_y, self.current_y)
-        self.thr_z = self.z_controller.update(self.target_z, self.current_z)
+        self.thr_z = self.z_controller.update(-self.target_z, -self.current_z)
         
         q_wxyz = self.convert_euler_to_quaternion()
 

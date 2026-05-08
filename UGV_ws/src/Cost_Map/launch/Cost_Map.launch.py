@@ -11,7 +11,7 @@ def generate_launch_description():
     scene_file = os.path.join(
         package_share,
         'resource',
-        'WALLR1.pcd'
+        'WALLR2.pcd'
     )
 
     template_file = os.path.join(
@@ -50,7 +50,6 @@ def generate_launch_description():
             {
                 'scene_file': scene_file,
                 'template_file': template_file,
-                'voxel_size': 0.05,
             }
 ]
     )

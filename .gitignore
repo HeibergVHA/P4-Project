@@ -212,3 +212,6 @@ AMENT_IGNORE
 ros2_ws.code-workspace
 
 Drone_ws/src/px4_msgs/
+
+*.npy
+
