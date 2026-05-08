@@ -23,6 +23,7 @@ import copy
 
 import numpy as np
 import open3d as o3d
+from sympy import centroid
 
 import rclpy
 from rclpy.node import Node
@@ -54,25 +55,25 @@ class LidarTemplateMatcherNode(Node):
             pkg = os.path.join(os.getcwd(), 'src', 'Cost_Map')
 
         self.declare_parameter('scene_file',
-            os.path.join(pkg, 'resource', 'WALLR1.pcd'))
+            os.path.join(pkg, 'resource', 'WALLR2.pcd'))
         self.declare_parameter('template_file',
             os.path.join(pkg, 'resource', 'rc_car_template.pcd'))
 
         # Voxel leaf size (metres).
-        # 0.10 m works well for a 1.9 M-point scene — coarse enough for
+        # 0.02 m works well for a 1.9 M-point scene — coarse enough for
         # distinctive FPFH features, fine enough to resolve the car shape.
-        self.declare_parameter('voxel_size', 0.10)
+        self.declare_parameter('voxel_size', 0.02)
 
         # Z band to keep after floor removal (metres, relative to floor = 0).
         # The RC-car template sits at z ≈ -0.50 → +0.18 before floor
-        # alignment, so a [-0.10, 1.50] band captures the car while
+        # alignment, so a [-0.10, 0.55] band captures the car while
         # discarding the ground and high clutter.
         self.declare_parameter('z_min',  -0.10)
-        self.declare_parameter('z_max',   1.50)
+        self.declare_parameter('z_max',   0.55)
 
         # Expand the crop box around the FGR result before running ICP.
         # Larger values are safer but slow ICP down.
-        self.declare_parameter('icp_crop_margin', 1.0)
+        self.declare_parameter('icp_crop_margin', 0.3)
 
         self.scene_file    = self.get_parameter('scene_file').value
         self.template_file = self.get_parameter('template_file').value
@@ -109,7 +110,7 @@ class LidarTemplateMatcherNode(Node):
             scene = self._load_scene()
 
             # 2. Remove floor plane
-            scene = self._remove_floor(scene)
+            #scene = self._remove_floor(scene)
 
             # 3. Z-height filter — discard ground noise and tall obstacles
             scene = self._filter_z(scene)
@@ -175,7 +176,7 @@ class LidarTemplateMatcherNode(Node):
             raise RuntimeError(f'Scene PCD has no points: {self.scene_file}')
 
         pts = np.asarray(pcd.points, dtype=np.float64)
-        pts, _ = self._align_floor(pts)
+        pts, self.floor_T = self._align_floor(pts)
         pcd.points = o3d.utility.Vector3dVector(pts)
 
         self.get_logger().info(
@@ -282,6 +283,10 @@ class LidarTemplateMatcherNode(Node):
         if not pcd.has_points():
             raise RuntimeError(f'Template PCD has no points: {self.template_file}')
 
+        centroid = pcd.get_center()
+        pcd.translate(-centroid)
+        self.template_centroid = centroid  # save to add back when publishing pose
+
         # The template already has pre-computed normals (x y z nx ny nz),
         # but we re-estimate them after downsampling for consistency.
         pcd = pcd.voxel_down_sample(self.voxel_size)
@@ -312,7 +317,7 @@ class LidarTemplateMatcherNode(Node):
         fpfh = o3d.pipelines.registration.compute_fpfh_feature(
             down,
             o3d.geometry.KDTreeSearchParamHybrid(
-                radius=self.voxel_size * 5, max_nn=100))
+                radius=self.voxel_size * 3, max_nn=30))
 
         return down, fpfh
 
@@ -329,17 +334,26 @@ class LidarTemplateMatcherNode(Node):
         because FGR uses tuple constraints internally; too loose causes false
         correspondences on a dense scene.
         """
-        result = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
-            src_down, tgt_down, src_fpfh, tgt_fpfh,
-            o3d.pipelines.registration.FastGlobalRegistrationOption(
-                maximum_correspondence_distance=self.voxel_size * 0.5,
-                iteration_number=256,        # more iterations → more reliable
-                maximum_tuple_count=2000,    # more tuples → better constraints
-                tuple_scale=0.95,
-                tuple_test=True,
+        best = None
+        for _ in range(4):
+            result = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
+                src_down, tgt_down, src_fpfh, tgt_fpfh,
+                o3d.pipelines.registration.FastGlobalRegistrationOption(
+                    maximum_correspondence_distance=self.voxel_size * 1.5,
+                    iteration_number=256,        # more iterations → more reliable
+                    maximum_tuple_count=2000,    # more tuples → better constraints
+                    tuple_scale=0.95,
+                    tuple_test=True,
+                )
             )
-        )
-        return result
+            if best is None or result.fitness > best.fitness:
+                best = result
+            
+            # Good enogh result, no need to keep trying random restarts
+            if best >= 0.7:
+                break
+            
+        return best
 
     # ──────────────────────────────────────────────────────────────────────────
     # Step 7 — Crop scene around FGR result
@@ -375,7 +389,7 @@ class LidarTemplateMatcherNode(Node):
         trap that caused ICP to degrade the FGR result in earlier testing.
         """
         T = init_T
-        for scale in [4.0, 2.0, 1.0]:
+        for scale in [3.0, 1.5, 0.5]:
             dist = self.voxel_size * scale
             result = o3d.pipelines.registration.registration_icp(
                 src, tgt,
@@ -412,17 +426,28 @@ class LidarTemplateMatcherNode(Node):
     def _publish_pose(self, T: np.ndarray, frame_id='map'):
         """Publish the 4×4 transform as geometry_msgs/PoseStamped (identity quaternion)."""
         msg = PoseStamped()
+
+        #T = np.linalg.inv(self.floor_T) @ T
+        R = T[:3, :3]
+        trace = R[0,0] + R[1,1] + R[2,2]
+        w = np.sqrt(max(0, 1 + trace)) / 2
+        x = (R[2,1] - R[1,2]) / (4*w)
+        y = (R[0,2] - R[2,0]) / (4*w)
+        z = (R[1,0] - R[0,1]) / (4*w)
+
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = frame_id
         msg.pose.position.x = float(T[0, 3])
         msg.pose.position.y = float(T[1, 3])
         msg.pose.position.z = float(T[2, 3])
-        msg.pose.orientation.w = 1.0   # TODO: extract quaternion from T[:3,:3] if needed
+        msg.pose.orientation.w = float(w)
+        msg.pose.orientation.x = float(x)
+        msg.pose.orientation.y = float(y)
+        msg.pose.orientation.z = float(z)
         self.pose_pub.publish(msg)
         self.get_logger().info(
             f'Published pose: x={T[0,3]:.3f}  y={T[1,3]:.3f}  z={T[2,3]:.3f}'
         )
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Entry point
