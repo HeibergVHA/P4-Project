@@ -269,7 +269,7 @@ class DroneController(Node):
     def convert_euler_to_quaternion(self):
         # On mavros the roll and pitch are not swapped but on px4 they are. 
         # So we use 2 different functions to convert the euler angles to quaternions depending on the source.
-        quat = R.from_euler('xyz', [self.phi_x, self.phi_y, 0.0], degrees=False)
+        quat = R.from_euler('xyz', [self.phi_y, -self.phi_x, 0.0], degrees=False)
         x,y,z,w = quat.as_quat()
         return [w,x,y,z]
 
