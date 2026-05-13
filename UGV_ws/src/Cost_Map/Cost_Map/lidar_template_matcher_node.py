@@ -24,6 +24,7 @@ import copy
 import numpy as np
 import open3d as o3d
 from sympy import centroid
+from datetime import datetime
 
 import rclpy
 from rclpy.node import Node
@@ -73,7 +74,7 @@ class LidarTemplateMatcherNode(Node):
 
         # Expand the crop box around the FGR result before running ICP.
         # Larger values are safer but slow ICP down.
-        self.declare_parameter('icp_crop_margin', 0.3)
+        self.declare_parameter('icp_crop_margin', 0.2)
 
         self.scene_file    = self.get_parameter('scene_file').value
         self.template_file = self.get_parameter('template_file').value
@@ -135,7 +136,12 @@ class LidarTemplateMatcherNode(Node):
             self.get_logger().info(f'FGR   fitness={fgr.fitness:.4f}  rmse={fgr.inlier_rmse:.4f}')
 
             # 7. Crop scene to FGR bounding box — keeps ICP from drifting
-            scene_cropped = self._crop_around_result(scene_down, template_down, fgr.transformation)
+            #scene_cropped = self._crop_around_result(scene_down, template_down, fgr.transformation)
+            scene_cropped = self._crop_around_result(
+                scene,
+                template_down,
+                fgr.transformation
+            )
             self.get_logger().info(
                 f'Scene cropped to {len(scene_cropped.points)} pts around FGR result'
             )
@@ -146,9 +152,18 @@ class LidarTemplateMatcherNode(Node):
 
             # Use ICP result if it improved on FGR, otherwise keep FGR
             final_T = icp.transformation if icp.fitness >= fgr.fitness else fgr.transformation
+            final_T = np.array(final_T)
+
+            # Rotate result by 90 degree around z-axis to match the template's forward direction with the car's forward direction in the scene
+            R = np.array([[np.cos(-np.pi/2), -np.sin(-np.pi/2), 0], [np.sin(-np.pi/2), np.cos(-np.pi/2),0], [0,0,1]])
+            final_T[:3, :3] = final_T[:3, :3] @ R
+
             self.get_logger().info(
                 f'Final translation: {final_T[:3, 3].round(3)}'
             )
+
+            # Save transform matrix as numpy array for later use
+            self._save_transform(final_T)
 
             # 9. Publish pose
             self._publish_pose(final_T)
@@ -317,7 +332,7 @@ class LidarTemplateMatcherNode(Node):
         fpfh = o3d.pipelines.registration.compute_fpfh_feature(
             down,
             o3d.geometry.KDTreeSearchParamHybrid(
-                radius=self.voxel_size * 3, max_nn=30))
+                radius=self.voxel_size * 5, max_nn=30))
 
         return down, fpfh
 
@@ -389,7 +404,7 @@ class LidarTemplateMatcherNode(Node):
         trap that caused ICP to degrade the FGR result in earlier testing.
         """
         T = init_T
-        for scale in [3.0, 1.5, 0.5]:
+        for scale in [1.0, 0.5, 0.25]:
             dist = self.voxel_size * scale
             result = o3d.pipelines.registration.registration_icp(
                 src, tgt,
@@ -447,6 +462,29 @@ class LidarTemplateMatcherNode(Node):
         self.pose_pub.publish(msg)
         self.get_logger().info(
             f'Published pose: x={T[0,3]:.3f}  y={T[1,3]:.3f}  z={T[2,3]:.3f}'
+        )
+
+    def _save_transform(self, T: np.ndarray):
+        """
+        Save final 4x4 transform matrix as .npy file.
+        """
+
+        save_dir = os.path.join(
+            os.getcwd(),
+            'src',
+            'Cost_Map',
+            'TemplateMatching'
+        )
+
+        os.makedirs(save_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_path = os.path.join(save_dir, f"T_rover_{timestamp}.npy")
+
+        np.save(save_path, T)
+
+        self.get_logger().info(
+            f'Saved transform to: {save_path}'
         )
 
 # ──────────────────────────────────────────────────────────────────────────────
