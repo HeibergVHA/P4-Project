@@ -104,10 +104,12 @@ class PurePursuitMission(Node):
         super().__init__('mission_planner')
 
         self.declare_parameter('input_source',   'local') # Input/startup parameters
+        self.declare_parameter('algorithm',   'hpp') # Input/startup parameters
         self.declare_parameter('lookahead_dist',  2.0)
         self.declare_parameter('capture_radius',  1.0)
         self.declare_parameter('publish_rate',   50.0)
         source                  = self.get_parameter('input_source').value
+        self.algorithm               = self.get_parameter('algorithm').value
         self.max_lookahead      = float(self.get_parameter('lookahead_dist').value)
         self.waypoint_radius    = float(self.get_parameter('capture_radius').value)
         publish_rate            = float(self.get_parameter('publish_rate').value)
@@ -218,7 +220,7 @@ class PurePursuitMission(Node):
             self.get_logger().warn(f'Unknown command: "{cmd}"')
 
     # Pure-pursuit
-    def pure_pursuit(self):
+    def hybrid_pure_pursuit(self):
         t = self.clock.now().nanoseconds * 1e-9
 
         # Waypoints
@@ -285,6 +287,110 @@ class PurePursuitMission(Node):
 
         return ref_out, yaw
 
+    # Pure-pursuit
+    def simple_pure_pursuit(self):
+
+        if self.seg_idx >= len(self.waypoints) - 1:
+            wp = self.waypoints[-1]
+            return wp[:3], wp[3]
+
+        # Current segment
+        A = self.waypoints[self.seg_idx][:3]
+        B = self.waypoints[self.seg_idx + 1][:3]
+
+        p = self.pos
+
+        # Project onto segment AB
+        closest_point, distance_along_seg = project_point_to_segment(p, A, B)
+
+        ref_out = closest_point + unit(B - A) * self.max_lookahead # Lookahead point
+        
+        dist_CP_B = np.linalg.norm(closest_point - B)
+        if dist_CP_B < self.max_lookahead: # Clamp to segment end if lookahead is longer that the distance to B
+            ref_out = B.copy()
+        
+        dist_to_B = np.linalg.norm(p - B)
+        if dist_to_B <= self.waypoint_radius: # Advance segment when close to B
+            if self.seg_idx < len(self.waypoints) - 2:
+                self.seg_idx += 1
+
+        # Yaw interpolation 
+        yaw_A = self.waypoints[self.seg_idx][3] # Yaw at last waypoint
+        yaw_B = self.waypoints[self.seg_idx + 1][3] # Target yaw at next waypoint
+
+        delta_yaw = (yaw_B - yaw_A + 180.0) % 360.0 - 180.0 # shortest arc (wraparound handeling)
+        yaw = yaw_A + float(distance_along_seg) * delta_yaw # Yaw based on progress along segment
+
+        return ref_out, yaw
+
+    def continuous_pure_pursuit(self): 
+
+        if self.seg_idx >= len(self.waypoints) - 1:
+            wp = self.waypoints[-1]
+            return wp[:3], wp[3]
+
+        p = self.pos
+
+        # Current segment
+        A = self.waypoints[self.seg_idx][:3]
+        B = self.waypoints[self.seg_idx + 1][:3]
+
+        # Projection onto current segment
+        closest_point, distance_along_seg = project_point_to_segment(p, A, B)
+
+        
+        remaining_lookahead = self.max_lookahead
+
+        ref_out = closest_point.copy()
+
+        temp_idx = self.seg_idx
+        current_point = closest_point.copy()
+
+        while True: # Continuous lookahead across multiple segments
+
+            next_wp = self.waypoints[temp_idx + 1][:3]
+
+            seg_vec = next_wp - current_point
+            seg_len = np.linalg.norm(seg_vec)
+
+            # Lookahead point lies on current segment
+            if seg_len >= remaining_lookahead:
+
+                ref_out = (
+                    current_point
+                    + unit(seg_vec) * remaining_lookahead
+                )
+
+                break
+
+            # Consume entire segment and continue
+            remaining_lookahead -= seg_len
+
+            # End of path
+            if temp_idx >= len(self.waypoints) - 2:
+                ref_out = next_wp.copy()
+                break
+
+            temp_idx += 1
+            current_point = self.waypoints[temp_idx][:3].copy()
+
+        # Advance segment index smoothly
+        dist_to_B = np.linalg.norm(closest_point - B)
+
+        if dist_to_B <= self.waypoint_radius:
+            if self.seg_idx < len(self.waypoints) - 2:
+                self.seg_idx += 1
+
+        # Yaw interpolation 
+        yaw_A = self.waypoints[self.seg_idx][3] # Yaw at last waypoint
+        yaw_B = self.waypoints[self.seg_idx + 1][3] # Target yaw at next waypoint
+
+        delta_yaw = (yaw_B - yaw_A + 180.0) % 360.0 - 180.0 # shortest arc (wraparound handeling)
+        yaw = yaw_A + float(distance_along_seg) * delta_yaw # Yaw based on progress along segment
+
+        return ref_out, yaw
+
+
     def publish(self, target_xyz: np.ndarray, target_yaw: float):
         q_wxyz = yaw_to_quaternion_wxyz(target_yaw)
         msg = PoseStamped()
@@ -307,7 +413,12 @@ class PurePursuitMission(Node):
             return
 
         # Compute lookahead reference
-        target_xyz, target_yaw = self.pure_pursuit()
+        if self.algorithm == "hpp":
+            target_xyz, target_yaw = self.hybrid_pure_pursuit()
+        elif self.algorithm == "spp":
+            target_xyz, target_yaw = self.simple_pure_pursuit()
+        else:
+            target_xyz, target_yaw = self.continuous_pure_pursuit()
 
         # Publish
         self.publish(target_xyz, target_yaw)
