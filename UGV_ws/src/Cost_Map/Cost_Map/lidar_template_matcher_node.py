@@ -30,7 +30,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Pose2D
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
@@ -86,6 +86,7 @@ class LidarTemplateMatcherNode(Node):
         # ── Publishers ────────────────────────────────────────────────────────
 
         self.pose_pub = self.create_publisher(PoseStamped, '/detected_object_pose', 10)
+        #self.publisher_ = self.create_publisher(Pose2D, '/rover_pose_2D', 10)
 
         # TRANSIENT_LOCAL so RViz2 receives the cloud even if it subscribes late
         qos = QoSProfile(depth=1)
@@ -132,38 +133,51 @@ class LidarTemplateMatcherNode(Node):
             )
 
             # 6. FGR global registration (coarse)
-            fgr = self._fgr(template_down, scene_down, template_fpfh, scene_fpfh)
+            #fgr = self._fgr(template_down, scene_down, template_fpfh, scene_fpfh)
+            fgr = self._ransac(template_down, scene_down, template_fpfh, scene_fpfh)
             self.get_logger().info(f'FGR   fitness={fgr.fitness:.4f}  rmse={fgr.inlier_rmse:.4f}')
 
             # 7. Crop scene to FGR bounding box — keeps ICP from drifting
             #scene_cropped = self._crop_around_result(scene_down, template_down, fgr.transformation)
-            scene_cropped = self._crop_around_result(
+            """scene_cropped = self._crop_around_result(
                 scene,
                 template_down,
                 fgr.transformation
             )
             self.get_logger().info(
                 f'Scene cropped to {len(scene_cropped.points)} pts around FGR result'
-            )
+            )"""
 
             # 8. Multi-scale ICP refinement (fine)
-            icp = self._icp(template_down, scene_cropped, fgr.transformation)
-            self.get_logger().info(f'ICP   fitness={icp.fitness:.4f}  rmse={icp.inlier_rmse:.4f}')
+            icp = self._icp(template_down, scene, fgr.transformation)
+            #self.get_logger().info(f'ICP   fitness={icp.fitness:.4f}  rmse={icp.inlier_rmse:.4f}')
 
             # Use ICP result if it improved on FGR, otherwise keep FGR
             final_T = icp.transformation if icp.fitness >= fgr.fitness else fgr.transformation
+            #final_T = fgr.transformation
             final_T = np.array(final_T)
 
             # Rotate result by 90 degree around z-axis to match the template's forward direction with the car's forward direction in the scene
-            R = np.array([[np.cos(-np.pi/2), -np.sin(-np.pi/2), 0], [np.sin(-np.pi/2), np.cos(-np.pi/2),0], [0,0,1]])
-            final_T[:3, :3] = final_T[:3, :3] @ R
+            #R = np.array([[np.cos(-np.pi/2), -np.sin(-np.pi/2), 0], [np.sin(-np.pi/2), np.cos(-np.pi/2),0], [0,0,1]])
+            #final_T[:3, :3] = final_T[:3, :3] @ R
 
             self.get_logger().info(
                 f'Final translation: {final_T[:3, 3].round(3)}'
             )
 
-            # Save transform matrix as numpy array for later use
-            self._save_transform(final_T)
+            # Store final position as (x, y, yaw) for later use
+            #final_pos = np.array([final_T[0, 3], final_T[1, 3], np.arctan2(final_T[2, 1], final_T[1, 1]) - np.pi/2])
+
+            #final_R = np.array([[np.cos(final_pos[2]), -np.sin(final_pos[2]), 0], [np.sin(final_pos[2]), np.cos(final_pos[2]),0], [0,0,1]])
+            #final_T[:3, :3] = final_R
+            #final_T[:3, 2] = 0
+
+            # Publish the 2D pose (x, y, theta) for use by other nodes
+            #self._publish_pose_2D(final_T)
+
+            # Save transform matrix as numpy array for later use 
+            # THIS IS THE ONE TO UNCOMMENT
+            #self._save_transform(final_T)
 
             # 9. Publish pose
             self._publish_pose(final_T)
@@ -171,7 +185,7 @@ class LidarTemplateMatcherNode(Node):
             response.success = True
             response.message = (
                 f'Match complete. '
-                f'FGR fitness={fgr.fitness:.3f}  ICP fitness={icp.fitness:.3f}'
+                f'FGR fitness={fgr.fitness:.3f}' #  ICP fitness={icp.fitness:.3f
             )
 
         except Exception as e:
@@ -249,7 +263,7 @@ class LidarTemplateMatcherNode(Node):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _remove_floor(self, pcd: o3d.geometry.PointCloud,
-                      dist_thresh=0.03) -> o3d.geometry.PointCloud:
+                      dist_thresh=0.1) -> o3d.geometry.PointCloud:
         """
         Segment the dominant plane (floor) and return only the non-floor points.
         After _align_floor the floor is at Z≈0, so a tight threshold works well.
@@ -340,7 +354,7 @@ class LidarTemplateMatcherNode(Node):
     # Step 6 — FGR global registration (coarse)
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _fgr(self, src_down, tgt_down, src_fpfh, tgt_fpfh):
+    '''def _fgr(self, src_down, tgt_down, src_fpfh, tgt_fpfh):
         """
         Fast Global Registration — faster and often more robust than RANSAC
         for partial-overlap scenes like a single object in a large map.
@@ -350,7 +364,7 @@ class LidarTemplateMatcherNode(Node):
         correspondences on a dense scene.
         """
         best = None
-        for _ in range(4):
+        for _ in range(10):
             result = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
                 src_down, tgt_down, src_fpfh, tgt_fpfh,
                 o3d.pipelines.registration.FastGlobalRegistrationOption(
@@ -368,6 +382,43 @@ class LidarTemplateMatcherNode(Node):
             if best.fitness >= 0.7:
                 break
             
+        return best'''
+
+    def _ransac(self, src_down, tgt_down, src_fpfh, tgt_fpfh):
+        """
+        RANSAC Global Registration.
+
+        More robust than FGR in highly noisy or ambiguous feature matches,
+        but typically slower. Good for partial overlap and sparse correspondences.
+        """
+        best = None
+
+        for _ in range(10):
+            result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+                src_down,
+                tgt_down,
+                src_fpfh,
+                tgt_fpfh,
+                mutual_filter=True,
+                max_correspondence_distance=self.voxel_size * 1.5,
+                estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+                ransac_n=4,
+                checkers=[
+                    o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+                    o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 1.5),
+                ],
+                criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(
+                    100000, 0.999
+                )
+            )
+
+            if best is None or result.fitness > best.fitness:
+                best = result
+
+            # Early stop if good enough alignment is found
+            if best.fitness >= 0.7:
+                break
+
         return best
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -462,6 +513,19 @@ class LidarTemplateMatcherNode(Node):
         self.pose_pub.publish(msg)
         self.get_logger().info(
             f'Published pose: x={T[0,3]:.3f}  y={T[1,3]:.3f}  z={T[2,3]:.3f}'
+        )
+    
+    def _publish_pose_2D(self, pose):
+        msg = Pose2D()
+
+        msg.x = pose[0]
+        msg.y = pose[1]
+        msg.theta = pose[2]
+
+        self.publisher_.publish(msg)
+
+        self.get_logger().info(
+            f'Publishing: x={msg.x}, y={msg.y}, theta={msg.theta}'
         )
 
     def _save_transform(self, T: np.ndarray):

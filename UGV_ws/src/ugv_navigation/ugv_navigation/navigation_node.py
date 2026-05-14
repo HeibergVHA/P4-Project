@@ -18,7 +18,7 @@ class NavigationNode(Node):
         )
         # The .npy file is shape (N, 3): each row is [x_world, y_world, cost]
         # We need to convert this into a 2D grid indexed by cell (row, col).
-        raw = np.load("path/to/costmap_<timestamp>.npy")  # shape (N, 3)
+        raw = np.load("src/Cost_Map/Cost_Map_Coordinates/costmap_20260508_105443.npy")  # shape (N, 3)
 
         # Figure out grid dimensions from the world coordinates
         # raw[:, 0] = x values, raw[:, 1] = y values, raw[:, 2] = costs
