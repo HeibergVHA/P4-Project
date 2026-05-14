@@ -51,7 +51,14 @@ def generate_launch_description():
                 'scene_file': scene_file,
                 'template_file': template_file,
             }
-]
+        ]
+    )
+
+    rover_trajectory_planner_node = Node(
+        package='Cost_Map',
+        executable='rover_trajectory_planner',
+        name='rover_trajectory_planner',
+        output='screen',
     )
 
     return LaunchDescription([

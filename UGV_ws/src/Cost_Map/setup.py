@@ -1,5 +1,5 @@
 import glob
-from setuptools import find_packages, setup
+from setuptools import setup, find_packages
 
 package_name = 'Cost_Map'
 
@@ -18,8 +18,8 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='jesper-kwame-jensen',
-    maintainer_email='you@example.com',
+    maintainer='Mathias Lykholt-Ustrup',
+    maintainer_email='mustru23@student.aau.dk',
     description='Coverts A point cloud to a cost map based on the slope of the terrain',
     license='TODO: License declaration',
     extras_require={
@@ -29,9 +29,11 @@ setup(
     },
     entry_points={
         'console_scripts': [
-        'lidar_costmap_node = Cost_Map.lidar_costmap_node:main',
-        'lidar_template_matcher_node = Cost_Map.lidar_template_matcher_node:main',
-        'pcd_publisher = Cost_Map.pcd_publisher:main',
+            'lidar_costmap_node = Cost_Map.lidar_costmap_node:main',
+            'lidar_template_matcher_node = Cost_Map.lidar_template_matcher_node:main',
+            'pcd_publisher = Cost_Map.pcd_publisher:main',
+            'rover_trajectory_planner = Cost_Map.rover_trajectory_planner:main',
+            'rover_trajectory_publisher = Cost_Map.rover_trajectory_publisher:main',
         ],
     },
 )
