@@ -20,15 +20,16 @@ Call the service:
 
 import os
 import copy
+import time
+from pathlib import Path
 
 import numpy as np
 import open3d as o3d
-from sympy import centroid
 from datetime import datetime
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
 from geometry_msgs.msg import PoseStamped, Pose2D
 from sensor_msgs.msg import PointCloud2, PointField
@@ -37,18 +38,15 @@ from std_msgs.msg import Header
 from std_srvs.srv import Trigger
 
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
+from nav_msgs.msg import OccupancyGrid
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Node
-# ──────────────────────────────────────────────────────────────────────────────
 
 class LidarTemplateMatcherNode(Node):
 
     def __init__(self):
         super().__init__('lidar_template_matcher_node')
 
-        # ── Parameters ────────────────────────────────────────────────────────
+        # - Parameters 
 
         try:
             pkg = get_package_share_directory('Cost_Map')
@@ -69,8 +67,8 @@ class LidarTemplateMatcherNode(Node):
         # The RC-car template sits at z ≈ -0.50 → +0.18 before floor
         # alignment, so a [-0.10, 0.55] band captures the car while
         # discarding the ground and high clutter.
-        self.declare_parameter('z_min',  -0.10)
-        self.declare_parameter('z_max',   0.55)
+        self.declare_parameter('z_min',  -0.55)
+        self.declare_parameter('z_max',   0.1)
 
         # Expand the crop box around the FGR result before running ICP.
         # Larger values are safer but slow ICP down.
@@ -83,7 +81,26 @@ class LidarTemplateMatcherNode(Node):
         self.z_max         = self.get_parameter('z_max').value
         self.icp_margin    = self.get_parameter('icp_crop_margin').value
 
-        # ── Publishers ────────────────────────────────────────────────────────
+        # - Subscribers
+        self._latest_costmap = None
+        self._latest_costmap_npy_info = None
+        self._latest_costmap_npy_path = None
+        self._costmap_coords_dir = self._find_costmap_coordinates_folder()
+
+        costmap_qos = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+
+        self.costmap_sub = self.create_subscription(
+            OccupancyGrid,
+            '/costmap/costmap',
+            self._costmap_callback,
+            costmap_qos,
+        )
+
+        # - Publishers
 
         self.pose_pub = self.create_publisher(PoseStamped, '/detected_object_pose', 10)
         #self.publisher_ = self.create_publisher(Pose2D, '/rover_pose_2D', 10)
@@ -93,7 +110,7 @@ class LidarTemplateMatcherNode(Node):
         qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self.cloud_pub = self.create_publisher(PointCloud2, '/pointcloud', qos)
 
-        # ── Service ───────────────────────────────────────────────────────────
+        # - Service 
 
         self.srv = self.create_service(Trigger, 'run_template_matching',
                                        self._match_callback)
@@ -102,9 +119,16 @@ class LidarTemplateMatcherNode(Node):
             'Ready — call:  ros2 service call /run_template_matching std_srvs/srv/Trigger \'{}\''
         )
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Service callback — top-level orchestration
-    # ──────────────────────────────────────────────────────────────────────────
+    # Service callback - top-level orchestration
+
+    def _costmap_callback(self, msg: OccupancyGrid):
+        self._latest_costmap = msg
+
+        self.get_logger().info(
+            f'Received costmap: '
+            f'{msg.info.width}x{msg.info.height} '
+            f'res={msg.info.resolution:.3f}'
+        )
 
     def _match_callback(self, request, response):
         try:
@@ -112,7 +136,16 @@ class LidarTemplateMatcherNode(Node):
             scene = self._load_scene()
 
             # 2. Remove floor plane
-            scene = self._remove_floor(scene)
+            #scene = self._remove_floor(scene)
+
+            # 3b. Costmap filter — keep only obstacle-region points
+            scene = self._filter_by_costmap(scene, threshold=99)
+
+            if len(scene.points) < 100:
+                raise RuntimeError(
+                    f'Costmap filter left only {len(scene.points)} points — '
+                    'check coordinate alignment or lower the threshold.'
+                )
 
             # 3. Z-height filter — discard ground noise and tall obstacles
             scene = self._filter_z(scene)
@@ -135,7 +168,20 @@ class LidarTemplateMatcherNode(Node):
             # 6. FGR global registration (coarse)
             #fgr = self._fgr(template_down, scene_down, template_fpfh, scene_fpfh)
             fgr = self._ransac(template_down, scene_down, template_fpfh, scene_fpfh)
-            self.get_logger().info(f'FGR   fitness={fgr.fitness:.4f}  rmse={fgr.inlier_rmse:.4f}')
+
+            #self.get_logger().info(f'Scene FPFH shape: {np.asarray(scene_fpfh.data).shape}')
+            #self.get_logger().info(f'Template FPFH shape: {np.asarray(template_fpfh.data).shape}')
+            #self.get_logger().info(f'Scene points: {len(scene_down.points)}')
+            #self.get_logger().info(f'Template points: {len(template_down.points)}')
+
+            # If no correspondences found, FGR failed to find any matches at all
+            if len(fgr.correspondence_set) == 0 or fgr.fitness < 0.05:
+                raise RuntimeError(
+                    f'RANSAC failed: fitness={fgr.fitness:.4f}, '
+                    f'correspondences={len(fgr.correspondence_set)}'
+                )
+
+            self.get_logger().info(f'ransac   fitness={fgr.fitness:.4f}  rmse={fgr.inlier_rmse:.4f}')
 
             # 7. Crop scene to FGR bounding box — keeps ICP from drifting
             #scene_cropped = self._crop_around_result(scene_down, template_down, fgr.transformation)
@@ -149,21 +195,19 @@ class LidarTemplateMatcherNode(Node):
             )"""
 
             # 8. Multi-scale ICP refinement (fine)
-            icp = self._icp(template_down, scene, fgr.transformation)
+            #icp = self._icp(template_down, scene_down, fgr.transformation)
+            #icp = fgr.transformation
             #self.get_logger().info(f'ICP   fitness={icp.fitness:.4f}  rmse={icp.inlier_rmse:.4f}')
 
             # Use ICP result if it improved on FGR, otherwise keep FGR
-            final_T = icp.transformation if icp.fitness >= fgr.fitness else fgr.transformation
-            #final_T = fgr.transformation
+            #final_T = icp.transformation if icp.fitness >= fgr.fitness else fgr.transformation
+            final_T = fgr.transformation
             final_T = np.array(final_T)
 
             # Rotate result by 90 degree around z-axis to match the template's forward direction with the car's forward direction in the scene
             #R = np.array([[np.cos(-np.pi/2), -np.sin(-np.pi/2), 0], [np.sin(-np.pi/2), np.cos(-np.pi/2),0], [0,0,1]])
             #final_T[:3, :3] = final_T[:3, :3] @ R
 
-            self.get_logger().info(
-                f'Final translation: {final_T[:3, 3].round(3)}'
-            )
 
             # Store final position as (x, y, yaw) for later use
             #final_pos = np.array([final_T[0, 3], final_T[1, 3], np.arctan2(final_T[2, 1], final_T[1, 1]) - np.pi/2])
@@ -172,12 +216,20 @@ class LidarTemplateMatcherNode(Node):
             #final_T[:3, :3] = final_R
             #final_T[:3, 2] = 0
 
+            self.get_logger().info(
+                f'Template centroid: {self.template_centroid}\n'
+                f'Final T:\n{final_T}\n'
+                f'Translation: [{final_T[0,3]:.3f}, {final_T[1,3]:.3f}, {final_T[2,3]:.3f}]\n'
+                f'Scene pts after filter: {len(scene.points)}\n'
+                f'RANSAC fitness: {fgr.fitness:.4f}  correspondences: {len(fgr.correspondence_set)}'
+            )
+
             # Publish the 2D pose (x, y, theta) for use by other nodes
             #self._publish_pose_2D(final_T)
 
             # Save transform matrix as numpy array for later use 
             # THIS IS THE ONE TO UNCOMMENT
-            #self._save_transform(final_T)
+            self._save_transform(final_T)
 
             # 9. Publish pose
             self._publish_pose(final_T)
@@ -195,9 +247,7 @@ class LidarTemplateMatcherNode(Node):
 
         return response
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 1 — Load scene and align floor to Z=0
-    # ──────────────────────────────────────────────────────────────────────────
+    # Step 1 - Load scene and align floor to Z=0
 
     def _load_scene(self) -> o3d.geometry.PointCloud:
         pcd = o3d.io.read_point_cloud(self.scene_file)
@@ -258,12 +308,10 @@ class LidarTemplateMatcherNode(Node):
 
         return rotated, T
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 2 — Remove floor plane
-    # ──────────────────────────────────────────────────────────────────────────
+    # Step 2 - Remove floor plane
 
     def _remove_floor(self, pcd: o3d.geometry.PointCloud,
-                      dist_thresh=0.1) -> o3d.geometry.PointCloud:
+                      dist_thresh=0.06) -> o3d.geometry.PointCloud:
         """
         Segment the dominant plane (floor) and return only the non-floor points.
         After _align_floor the floor is at Z≈0, so a tight threshold works well.
@@ -278,10 +326,8 @@ class LidarTemplateMatcherNode(Node):
             f'{len(no_floor.points)} remaining'
         )
         return no_floor
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 3 — Z-height filter
-    # ──────────────────────────────────────────────────────────────────────────
+    
+    # Step 3 - Z-height filter
 
     def _filter_z(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
         """
@@ -303,9 +349,129 @@ class LidarTemplateMatcherNode(Node):
         )
         return filtered
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 4 — Load & downsample template
-    # ──────────────────────────────────────────────────────────────────────────
+    def _filter_by_costmap(self, pcd: o3d.geometry.PointCloud,
+                            threshold: int = 253) -> o3d.geometry.PointCloud:
+        """Keep only points whose (x, y) falls in a costmap cell >= threshold."""
+        if self._latest_costmap_npy_info is None:
+            data = self._wait_for_latest_costmap_npy()
+            self._latest_costmap_npy_info = self._prepare_costmap_from_npy(data)
+
+        if self._latest_costmap_npy_info is None:
+            if self._latest_costmap is None:
+                self.get_logger().warn('No costmap data available — skipping costmap filter.')
+                return pcd
+            info   = self._latest_costmap.info
+            res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
+            w, h   = info.width, info.height
+            grid   = np.array(self._latest_costmap.data, dtype=np.int16).reshape(h, w)
+        else:
+            info = self._latest_costmap_npy_info
+            res, ox, oy = info['resolution'], info['origin_x'], info['origin_y']
+            w, h = info['width'], info['height']
+            grid = info['grid']
+
+        pts = np.asarray(pcd.points)
+        col = np.floor((pts[:, 0] - ox) / res).astype(np.int32)
+        row = np.floor((pts[:, 1] - oy) / res).astype(np.int32)
+
+        in_bounds = (col >= 0) & (col < w) & (row >= 0) & (row < h)
+        cost_values = np.full(len(pts), -1, dtype=np.int16)
+        cost_values[in_bounds] = grid[row[in_bounds], col[in_bounds]]
+
+        mask = cost_values >= threshold
+        filtered = pcd.select_by_index(np.where(mask)[0])
+        self.get_logger().info(
+            f'Costmap filter: {len(pts):,} → {len(filtered.points):,} pts '
+            f'(threshold={threshold})'
+        )
+        return filtered
+
+    def _find_costmap_coordinates_folder(self):
+        for parent in Path(__file__).resolve().parents:
+            candidate = parent / 'src' / 'Cost_Map' / 'Cost_Map_Coordinates'
+            if candidate.exists():
+                return candidate
+
+        self.get_logger().warn(
+            'Could not locate Cost_Map_Coordinates folder; .npy costmap loading may not be available.'
+        )
+        return None
+
+    def _wait_for_latest_costmap_npy(self) -> np.ndarray:
+        if self._costmap_coords_dir is None:
+            raise RuntimeError('Cost_Map_Coordinates folder not found')
+
+        while True:
+            npy_files = sorted(
+                self._costmap_coords_dir.glob('*.npy'),
+                key=lambda path: path.stat().st_mtime
+            )
+            if npy_files:
+                latest = npy_files[-1]
+                data = np.load(latest)
+                if isinstance(data, np.ndarray) and data.ndim == 2 and data.shape[1] >= 3:
+                    self._latest_costmap_npy_path = latest
+                    self.get_logger().info(
+                        f'Loaded latest costmap file: {latest.name} '
+                        f'(shape={data.shape})'
+                    )
+                    return data
+                self.get_logger().warn(
+                    f'Skipping invalid .npy file: {latest.name} shape={getattr(data, "shape", None)}'
+                )
+            self.get_logger().info(
+                f'Waiting for a .npy file in: {self._costmap_coords_dir}'
+            )
+            time.sleep(1.0)
+
+    def _prepare_costmap_from_npy(self, raw: np.ndarray):
+        raw = np.asarray(raw, dtype=np.float64)
+        if raw.ndim != 2 or raw.shape[1] < 3:
+            raise RuntimeError(f'Invalid costmap .npy shape: {raw.shape}')
+
+        xs = raw[:, 0]
+        ys = raw[:, 1]
+        costs = raw[:, 2].astype(np.int16)
+
+        resolution = self._infer_costmap_resolution(xs, ys)
+        min_x, min_y = float(xs.min()), float(ys.min())
+        max_x, max_y = float(xs.max()), float(ys.max())
+
+        width = int(round((max_x - min_x) / resolution)) + 1
+        height = int(round((max_y - min_y) / resolution)) + 1
+        grid = np.full((height, width), -1, dtype=np.int16)
+
+        cols = np.rint((xs - min_x) / resolution).astype(np.int32)
+        rows = np.rint((ys - min_y) / resolution).astype(np.int32)
+        valid = (
+            (rows >= 0) & (rows < height) &
+            (cols >= 0) & (cols < width)
+        )
+        grid[rows[valid], cols[valid]] = costs[valid]
+
+        return {
+            'grid': grid,
+            'origin_x': min_x,
+            'origin_y': min_y,
+            'resolution': resolution,
+            'width': width,
+            'height': height,
+        }
+
+    def _infer_costmap_resolution(self, xs: np.ndarray, ys: np.ndarray) -> float:
+        def infer(values: np.ndarray) -> float:
+            uniq = np.unique(np.round(values, 6))
+            if len(uniq) < 2:
+                return 0.05
+            diffs = np.diff(np.sort(uniq))
+            diffs = diffs[diffs > 1e-6]
+            return float(diffs.min()) if diffs.size else 0.05
+
+        res_x = infer(xs)
+        res_y = infer(ys)
+        return min(res_x, res_y) if res_x and res_y else max(res_x, res_y, 0.05)
+
+    # Step 4 - Load & downsample template
 
     def _load_template(self) -> o3d.geometry.PointCloud:
         pcd = o3d.io.read_point_cloud(self.template_file)
@@ -318,12 +484,11 @@ class LidarTemplateMatcherNode(Node):
 
         # The template already has pre-computed normals (x y z nx ny nz),
         # but we re-estimate them after downsampling for consistency.
-        pcd = pcd.voxel_down_sample(self.voxel_size)
+        #pcd = pcd.voxel_down_sample(self.voxel_size)
+
         return pcd
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 5 — Preprocessing: normals + FPFH features
-    # ──────────────────────────────────────────────────────────────────────────
+    # Step 5 - Preprocessing: normals + FPFH features
 
     def _preprocess(self, pcd: o3d.geometry.PointCloud):
         """
@@ -336,25 +501,25 @@ class LidarTemplateMatcherNode(Node):
         # too local (noisy) or too global (smoothed over edges)
         down.estimate_normals(
             o3d.geometry.KDTreeSearchParamHybrid(
-                radius=self.voxel_size * 2, max_nn=50))
+                radius=self.voxel_size, max_nn=50))
+
+        down.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size * 2, max_nn=50))
 
         # Consistent orientation — required for Point-to-Plane ICP
-        down.orient_normals_consistent_tangent_plane(k=15)
+        #down.orient_normals_consistent_tangent_plane(k=15)
 
         # FPFH radius: 5× voxel captures enough neighbourhood context for
         # distinctive descriptors; 100 neighbours caps memory usage
         fpfh = o3d.pipelines.registration.compute_fpfh_feature(
             down,
-            o3d.geometry.KDTreeSearchParamHybrid(
-                radius=self.voxel_size * 5, max_nn=30))
+            o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size * 5, max_nn=100))
 
         return down, fpfh
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 6 — FGR global registration (coarse)
-    # ──────────────────────────────────────────────────────────────────────────
+    # Step 6 - FGR global registration (coarse)
 
-    '''def _fgr(self, src_down, tgt_down, src_fpfh, tgt_fpfh):
+    def _fgr(self, src_down, tgt_down, src_fpfh, tgt_fpfh):
         """
         Fast Global Registration — faster and often more robust than RANSAC
         for partial-overlap scenes like a single object in a large map.
@@ -368,7 +533,7 @@ class LidarTemplateMatcherNode(Node):
             result = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
                 src_down, tgt_down, src_fpfh, tgt_fpfh,
                 o3d.pipelines.registration.FastGlobalRegistrationOption(
-                    maximum_correspondence_distance=self.voxel_size * 1.5,
+                    maximum_correspondence_distance=self.voxel_size,
                     iteration_number=256,        # more iterations → more reliable
                     maximum_tuple_count=2000,    # more tuples → better constraints
                     tuple_scale=0.95,
@@ -382,7 +547,7 @@ class LidarTemplateMatcherNode(Node):
             if best.fitness >= 0.7:
                 break
             
-        return best'''
+        return best
 
     def _ransac(self, src_down, tgt_down, src_fpfh, tgt_fpfh):
         """
@@ -400,12 +565,12 @@ class LidarTemplateMatcherNode(Node):
                 src_fpfh,
                 tgt_fpfh,
                 mutual_filter=True,
-                max_correspondence_distance=self.voxel_size * 1.5,
+                max_correspondence_distance=self.voxel_size * 5,
                 estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
                 ransac_n=4,
                 checkers=[
                     o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
-                    o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 1.5),
+                    o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 5),
                 ],
                 criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(
                     100000, 0.999
@@ -416,14 +581,12 @@ class LidarTemplateMatcherNode(Node):
                 best = result
 
             # Early stop if good enough alignment is found
-            if best.fitness >= 0.7:
-                break
+            #if best.fitness >= 0.7:
+            #    break
 
         return best
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 7 — Crop scene around FGR result
-    # ──────────────────────────────────────────────────────────────────────────
+    # Step 7 - Crop scene around FGR result
 
     def _crop_around_result(self, scene_down, template_down,
                              transform: np.ndarray) -> o3d.geometry.PointCloud:
@@ -444,9 +607,7 @@ class LidarTemplateMatcherNode(Node):
 
         return scene_down.crop(bbox)
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Step 8 — Multi-scale ICP refinement (fine)
-    # ──────────────────────────────────────────────────────────────────────────
+    # Step 8 - Multi-scale ICP refinement (fine)
 
     def _icp(self, src, tgt, init_T: np.ndarray):
         """
@@ -469,9 +630,7 @@ class LidarTemplateMatcherNode(Node):
 
         return result
 
-    # ──────────────────────────────────────────────────────────────────────────
     # Publishers
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _publish_cloud(self, points: np.ndarray, frame_id='map'):
         """Publish an Nx3 float32 array as sensor_msgs/PointCloud2."""
@@ -494,6 +653,8 @@ class LidarTemplateMatcherNode(Node):
         msg = PoseStamped()
 
         #T = np.linalg.inv(self.floor_T) @ T
+
+        #T = np.linalg.inv(self.floor_T) @ T
         R = T[:3, :3]
         trace = R[0,0] + R[1,1] + R[2,2]
         w = np.sqrt(max(0, 1 + trace)) / 2
@@ -503,9 +664,9 @@ class LidarTemplateMatcherNode(Node):
 
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = frame_id
-        msg.pose.position.x = float(T[0, 3])
-        msg.pose.position.y = float(T[1, 3])
-        msg.pose.position.z = float(T[2, 3])
+        msg.pose.position.x = float(T[0, 3]) # + self.template_centroid[0]
+        msg.pose.position.y = float(T[1, 3]) # + self.template_centroid[1]
+        msg.pose.position.z = float(T[2, 3]) # + self.template_centroid[2]
         msg.pose.orientation.w = float(w)
         msg.pose.orientation.x = float(x)
         msg.pose.orientation.y = float(y)
@@ -514,7 +675,7 @@ class LidarTemplateMatcherNode(Node):
         self.get_logger().info(
             f'Published pose: x={T[0,3]:.3f}  y={T[1,3]:.3f}  z={T[2,3]:.3f}'
         )
-    
+
     def _publish_pose_2D(self, pose):
         msg = Pose2D()
 
@@ -550,10 +711,6 @@ class LidarTemplateMatcherNode(Node):
         self.get_logger().info(
             f'Saved transform to: {save_path}'
         )
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ──────────────────────────────────────────────────────────────────────────────
 
 def main(args=None):
     rclpy.init(args=args)

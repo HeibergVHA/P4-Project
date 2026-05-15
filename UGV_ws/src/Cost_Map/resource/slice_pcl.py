@@ -7,16 +7,16 @@ OUTPUT_FILE = "rc_car_template.pcd"
 
 # حدود الصندوق (عدّلها حسب بياناتك)
 # [xmin, ymin, zmin]
-min_bound = np.array([4.6, -0.5, -0.5])
+min_bound = np.array([4.6, 0.15, -0.5])
 
 # [xmax, ymax, zmax]
-max_bound = np.array([5.2, 1.0, 1.0])
+max_bound = np.array([5.2, 1.0, 0.1])
 
 def remove_ground(pcd):
     print("Removing ground plane...")
 
     plane_model, inliers = pcd.segment_plane(
-        distance_threshold=0.15,
+        distance_threshold=0.06,
         ransac_n=3,
         num_iterations=1000
     )
@@ -66,6 +66,7 @@ def main():
 
     # Step 1: remove ground
     objects = remove_ground(cropped)
+    #objects = cropped  # skip ground removal for now
 
     print(f"Points after ground removal: {len(objects.points)}")
 
