@@ -270,11 +270,20 @@ class PurePursuitMission(Node):
             if has_next:
                 ref_out = B.copy() + unit(C - B) * self.current_lookahead
                 _, lookahead_distance_along_seg_BC = project_point_to_segment(ref_out, B, C)
-                if (d_BC < d_AB) and distance_along_seg_BC < lookahead_distance_along_seg_BC or (d_BC < d_AB) and distance_along_seg_BC > self.max_lookahead:
-                    self.t_transition_start = t
-                    self.seg_idx += 1
-                    self.mode = "TRACK"
-                    self.get_logger().info('Mode: TRACK')
+                if d_BC < d_AB:
+                    if distance_along_seg_BC > lookahead_distance_along_seg_BC: # This case will have a jump in ref_out because it goes from lookahead from B to lookahead from closest_point.
+                        self.t_transition_start = t # This will reset the lookahead to minimize the jump.
+                        self.seg_idx += 1           # This if could be a part of (and block) the earlier if statement, but that would require the ""distance_along_seg_BC" subtracted from lookahead distance" to work in the following elif.
+                        self.mode = "TRACK"
+                        self.get_logger().info('Mode: TRACK')
+                    elif distance_along_seg_BC < lookahead_distance_along_seg_BC:
+                        # Lookahead distance in this case should have "distance_along_seg_BC" subtracted from it to avoid jump in ref_out 
+                        # (only relevant if distance_along_seg_BC != 0, i.e. drone projection on BC != ~B in the instant it comes closer to BC), 
+                        # but I don't know how.
+                        self.seg_idx += 1
+                        self.mode = "TRACK"
+                        self.get_logger().info('Mode: TRACK')
+
             else:
                 ref_out = B.copy()
 
