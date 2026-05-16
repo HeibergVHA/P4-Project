@@ -15,22 +15,18 @@ The node exposes two services:
   /set_thresholds    – update classification parameters at runtime
 """
 
-# ── Standard library ──────────────────────────────────────────────────────────
 from datetime import datetime
 from pathlib import Path
 
-# ── Third-party ───────────────────────────────────────────────────────────────
 import cv2
 import numpy as np
 import open3d as o3d
 from scipy.ndimage import maximum_filter, minimum_filter
 
-# ── ROS2 core ─────────────────────────────────────────────────────────────────
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
-# ── ROS2 messages & services ──────────────────────────────────────────────────
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import PointCloud2, PointField
@@ -39,11 +35,10 @@ from std_msgs.msg import Header
 from std_srvs.srv import Trigger
 from tf2_ros import StaticTransformBroadcaster
 
-# ── Custom interfaces ─────────────────────────────────────────────────────────
 from threshold_interfaces.srv import SetThresholds
 
 
-# ── Cost values used throughout the node ─────────────────────────────────────
+# - Cost values used throughout the node
 COST_FREE     = 10   # Flat, traversable terrain
 COST_CAUTION  = 50   # Mildly rough terrain – proceed carefully
 COST_BUFFER   = 100   # Inflation buffer around obstacles
@@ -63,8 +58,6 @@ class LidarCostmapGenerator(Node):
       6. Combine both layers element-wise → master layer.
       7. Publish all three layers as OccupancyGrid messages and save to disk.
     """
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def __init__(self):
         super().__init__('lidar_costmap_generator')
@@ -86,13 +79,17 @@ class LidarCostmapGenerator(Node):
             "threshold_interfaces/srv/SetThresholds '{}'"
         )
 
+        # In __init__, after your existing publishers:
+        self._latest_costmap: OccupancyGrid | None = None
+
+
     def _declare_parameters(self):
         """Register all node parameters with their default values."""
         self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/WALLR2.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
-        self.declare_parameter('inflation_radius_meters',   0.05)
-        self.declare_parameter('flat_caution_threshold',    0.03)
+        self.declare_parameter('inflation_radius_meters',   0.2) # 0.05
+        self.declare_parameter('flat_caution_threshold',    0.01)
         self.declare_parameter('caution_obstacle_threshold', 0.08)
         # Neighbourhood size for the local-extrema filters used in roughness estimation.
         # Larger values smooth noise but may blur small obstacles.
@@ -124,8 +121,8 @@ class LidarCostmapGenerator(Node):
         qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
 
         self.pub_master    = self.create_publisher(OccupancyGrid, '/master_costmap',    qos)
-        self.pub_static    = self.create_publisher(OccupancyGrid, '/static_costmap',    qos)
-        self.pub_inflation = self.create_publisher(OccupancyGrid, '/inflation_costmap', qos)
+        #self.pub_static    = self.create_publisher(OccupancyGrid, '/static_costmap',    qos)
+        #self.pub_inflation = self.create_publisher(OccupancyGrid, '/inflation_costmap', qos)
         self.pub_cloud     = self.create_publisher(PointCloud2,   '/pointcloud',        qos)
 
     def _create_services(self):
@@ -133,7 +130,7 @@ class LidarCostmapGenerator(Node):
         self.create_service(Trigger,        'generate_costmap', self._on_generate_costmaps)
         self.create_service(SetThresholds,  'set_thresholds',   self._on_set_thresholds)
 
-    # ── Service handlers ──────────────────────────────────────────────────────
+    # - Service handlers
 
     def _on_set_thresholds(self, request, response):
         """Update classification parameters at runtime without restarting the node."""
@@ -166,8 +163,6 @@ class LidarCostmapGenerator(Node):
             response.message = "Failed to load PCD — check pcd_file_path."
             return response
 
-        self._publish_pointcloud(points)
-
         width_cells  = int((max_bound[0] - min_bound[0]) / self.costmap_resolution) + 1
         height_cells = int((max_bound[1] - min_bound[1]) / self.costmap_resolution) + 1
         self.get_logger().info(f"Grid: {width_cells} x {height_cells} cells")
@@ -178,19 +173,68 @@ class LidarCostmapGenerator(Node):
 
         static    = self._build_static_layer(elevation_map, has_data)
         inflation = self._build_inflation_layer(static)
-        master    = np.maximum(static, inflation)  # element-wise max; -1 (unknown) is overridden by any real cost
+        master    = np.maximum(static, inflation)
 
-        self._publish_costmap(static,    width_cells, height_cells, min_bound, '/static_costmap',    self.pub_static)
-        self._publish_costmap(inflation, width_cells, height_cells, min_bound, '/inflation_costmap', self.pub_inflation)
-        self._publish_costmap(master,    width_cells, height_cells, min_bound, '/master_costmap',    self.pub_master)
-        self._save_costmap_to_npy(master, min_bound)
+        self._publish_costmap(master, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
+        #self._save_costmap_to_npy(master, min_bound)
+
+        # Pass the grid directly — no subscription needed
+        points = self._filter_by_costmap_grid(points, master, min_bound, threshold=99)
+
+        self._publish_pointcloud(points)
 
         response.success = True
         response.message = f"Costmaps generated: {width_cells}x{height_cells} cells"
         self.get_logger().info(response.message)
         return response
 
-    # ── TF ───────────────────────────────────────────────────────────────────
+
+    def _filter_by_costmap(self, points: np.ndarray,
+                            threshold: int = 99) -> np.ndarray:
+        """Keep only points whose (x, y) falls in a costmap cell >= threshold."""
+        if self._latest_costmap is None:
+            self.get_logger().warn('No costmap received — skipping costmap filter.')
+            return points
+
+        info = self._latest_costmap.info
+        res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
+        w, h = info.width, info.height
+        grid = np.array(self._latest_costmap.data, dtype=np.int16).reshape(h, w)
+
+        col = np.floor((points[:, 0] - ox) / res).astype(np.int32)
+        row = np.floor((points[:, 1] - oy) / res).astype(np.int32)
+
+        in_bounds = (col >= 0) & (col < w) & (row >= 0) & (row < h)
+        cost_values = np.full(len(points), -1, dtype=np.int16)
+        cost_values[in_bounds] = grid[row[in_bounds], col[in_bounds]]
+
+        mask = cost_values >= threshold
+        filtered = points[mask]  # plain numpy boolean index — no Open3D needed
+        self.get_logger().info(
+            f'Costmap filter: {len(points):,} → {len(filtered):,} pts '
+            f'(threshold={threshold})'
+        )
+        return filtered
+
+    def _filter_by_costmap_grid(self, points: np.ndarray, grid: np.ndarray,
+                                min_bound: np.ndarray, threshold: int = 99) -> np.ndarray:
+        """Filter points using the locally computed costmap grid (no subscription needed)."""
+        col = np.floor((points[:, 0] - min_bound[0]) / self.costmap_resolution).astype(np.int32)
+        row = np.floor((points[:, 1] - min_bound[1]) / self.costmap_resolution).astype(np.int32)
+
+        h, w = grid.shape
+        in_bounds = (col >= 0) & (col < w) & (row >= 0) & (row < h)
+        cost_values = np.full(len(points), -1, dtype=np.int16)
+        cost_values[in_bounds] = grid[row[in_bounds], col[in_bounds]]
+
+        mask = cost_values >= threshold
+        filtered = points[mask]
+        self.get_logger().info(
+            f'Costmap filter: {len(points):,} → {len(filtered):,} pts (threshold={threshold})'
+        )
+        return filtered
+
+    # - TF
 
     def _publish_map_frame(self):
         """Publish a zero-offset static transform from 'world' to the map frame."""
@@ -202,7 +246,7 @@ class LidarCostmapGenerator(Node):
         self._tf_broadcaster.sendTransform(t)
         self.get_logger().info(f"Static TF published: world → {self.map_frame_id}")
 
-    # ── Point-cloud processing ────────────────────────────────────────────────
+    # - Point-cloud processing
 
     def _load_and_align_pcd(self):
         """
@@ -329,7 +373,7 @@ class LidarCostmapGenerator(Node):
         has_data = z_counts > 0
         return elevation_map, has_data
 
-    # ── Costmap layer construction ────────────────────────────────────────────
+    # - Costmap layer construction
 
     def _build_static_layer(self, elevation_map, has_data):
         """
@@ -391,7 +435,7 @@ class LidarCostmapGenerator(Node):
 
         return inflation
 
-    # ── Publishing helpers ────────────────────────────────────────────────────
+    # - Publishing helpers
 
     def _publish_pointcloud(self, points):
         """Publish an Nx3 numpy array as a ROS2 PointCloud2 message."""
@@ -438,7 +482,7 @@ class LidarCostmapGenerator(Node):
         )
         publisher.publish(msg)
 
-    # ── Persistence ───────────────────────────────────────────────────────────
+    # - Save to disk
 
     def _find_save_folder(self):
         """
@@ -483,8 +527,6 @@ class LidarCostmapGenerator(Node):
         except Exception as exc:
             self.get_logger().error(f"Failed to save costmap: {exc}")
 
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main(args=None):
     rclpy.init(args=args)
