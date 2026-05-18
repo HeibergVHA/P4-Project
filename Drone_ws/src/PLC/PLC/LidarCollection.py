@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.serialization import serialize_message
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, NavSatFix
 from livox_interfaces.msg import CustomMsg
 from std_srvs.srv import Trigger
 import datetime
@@ -42,6 +42,13 @@ class LivoxBagRecorder(Node):
             Imu,
             '/livox/imu',
             self.imu_callback,
+            10
+        )
+
+        self.gps_sub = self.create_subscription(
+            NavSatFix,
+            '/mavros/global_position/global',
+            self.gps_callback,
             10
         )
         self._pending_send = False
@@ -96,6 +103,12 @@ class LivoxBagRecorder(Node):
             serialization_format='cdr')
         self.writer.create_topic(imu_topic)
 
+        gps_topic = rosbag2_py.TopicMetadata(
+            name='/mavros/global_position/global',
+            type='sensor_msgs/msg/NavSatFix',
+            serialization_format='cdr')
+        self.writer.create_topic(gps_topic)
+
         self.recording = True
         self.get_logger().info(f'Recording started: {self.bag_name}')
         response.success = True
@@ -129,7 +142,14 @@ class LivoxBagRecorder(Node):
                 '/livox/imu',
                 serialize_message(msg),
                 self.get_clock().now().nanoseconds)
-            
+    
+    def gps_callback(self, msg):
+        if self.recording and self.writer:
+            self.writer.write(
+                '/mavros/global_position/global',
+                serialize_message(msg),
+                self.get_clock().now().nanoseconds
+            )
     def trigger_send(self):
         request = Trigger.Request()
         future = self.send_client.call_async(request)

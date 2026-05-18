@@ -59,7 +59,11 @@ class PID:
         p = self.kp * error
 
         # Integral + clamp anti-windup
-        self._integral += error * self.dt
+        if abs(error) < 3.0:
+            self._integral += error * self.dt
+        else:
+            # optional: decay instead of freeze
+            self._integral *= 0.99
         if self.integral_limit is not None:
             self._integral = float(np.clip(self._integral, -self.integral_limit, self.integral_limit))
         i = self.ki * self._integral
@@ -126,9 +130,9 @@ class DroneController(Node):
 
         # Controllers
         #self.xy_controller = XYController(hover_thrust=0.73)
-        self.x_controller = PID(kp=0.00262, ki=0.000015, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
-        self.y_controller = PID(kp=0.00262, ki=0.000015, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
-        self.z_controller  = PID(kp=0.1, ki=0.05, kd=0.2, dt=self.dt, thr_min=0.3, thr_max=1.0,hover_thrust=0.76, integral_limit = 0.9)
+        self.x_controller = PID(kp=0.0262, ki=0.00075, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
+        self.y_controller = PID(kp=0.0262, ki=0.00075, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
+        self.z_controller  = PID(kp=0.1, ki=0.05, kd=0.2, dt=self.dt, thr_min=0.3, thr_max=1.0,hover_thrust=0.76, integral_limit = 4.0)
 
 
         # self.x_controller = PID(kp=0.00302, ki=0.000020, kd=0.098224, dt=self.dt, output_limit=np.radians(10.0))

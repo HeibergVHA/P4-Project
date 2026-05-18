@@ -19,18 +19,23 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPo
 
 # Waypoint list: (x [m], y [m], z [m], yaw [deg])
 
-# DEFAULT_WAYPOINTS = [
-#     (  0.0,   0.0,  0.0,   0.0),
-#     (  0.0,   0.0,  2.0,   0.0),
-#     ( 10.0,   0.0,  2.0,   0.0),
-#     ( 10.0,  10.0,  2.0,  90.0),
-#     (  0.0,  10.0,  2.0, 180.0),
-#     (  0.0,  20.0,  2.0,  90.0),
-#     ( 10.0,  20.0,  2.0,   0.0),
-#     ( 10.0,  30.0,  2.0,  90.0),
-#     (  0.0,  30.0,  2.0, 180.0),
-#     (  0.0,   0.0,  2.0, 180.0)
-# ]
+#DEFAULT_WAYPOINTS = [
+#    (  0.0,   0.0,  0.0,   0.0),
+#    (  0.0,   0.0, 10.0,   0.0),
+#    ( 10.0,   0.0, 10.0,   0.0),
+#    ( 10.0, -10.0, 10.0,   0.0),
+#    ( 20.0, -10.0, 10.0,   0.0),
+#    ( 20.0,  10.0, 10.0,   0.0),
+#    ( 30.0,  10.0, 10.0,   0.0),
+#    ( 30.0,  00.0, 10.0,   0.0),
+#    (  0.0,  00.0, 10.0,   0.0)
+#]
+
+DEFAULT_WAYPOINTS = [
+    (  0.0,   0.0,  0.0,   0.0),
+    (  0.0,   0.0, 10.0,   0.0),
+    ( 20.0,  20.0, 10.0,   0.0)
+]
 
 DEFAULT_WAYPOINTS = [
     (  0.0,   0.0,  0.0,   0.0),
@@ -270,7 +275,7 @@ class PurePursuitMission(Node):
             if has_next:
                 ref_out = B.copy() + unit(C - B) * self.current_lookahead
                 _, lookahead_distance_along_seg_BC = project_point_to_segment(ref_out, B, C)
-                if d_BC < d_AB:
+                if d_BC <= d_AB:
                     if distance_along_seg_BC > lookahead_distance_along_seg_BC: # This case will have a jump in ref_out because it goes from lookahead from B to lookahead from closest_point.
                         self.t_transition_start = t # This will reset the lookahead to minimize the jump.
                         self.seg_idx += 1           # This if could be a part of (and block) the earlier if statement, but that would require the ""distance_along_seg_BC" subtracted from lookahead distance" to work in the following elif.
