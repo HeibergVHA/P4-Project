@@ -54,7 +54,7 @@ class LidarTemplateMatcherNode(Node):
             pkg = os.path.join(os.getcwd(), 'src', 'Cost_Map')
 
         self.declare_parameter('scene_file',
-            os.path.join(pkg, 'resource', 'WALLR2.pcd'))
+            os.path.join(pkg, 'resource', 'scene_cloud.pcd'))
         self.declare_parameter('template_file',
             os.path.join(pkg, 'resource', 'rc_car_template.pcd'))
 
@@ -68,7 +68,7 @@ class LidarTemplateMatcherNode(Node):
         # alignment, so a [-0.10, 0.55] band captures the car while
         # discarding the ground and high clutter.
         self.declare_parameter('z_min',  -0.55)
-        self.declare_parameter('z_max',   0.1)
+        self.declare_parameter('z_max',   0.55)
 
         # Expand the crop box around the FGR result before running ICP.
         # Larger values are safer but slow ICP down.
@@ -91,13 +91,6 @@ class LidarTemplateMatcherNode(Node):
             depth=10,
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
-        )
-
-        self.costmap_sub = self.create_subscription(
-            OccupancyGrid,
-            '/costmap/costmap',
-            self._costmap_callback,
-            costmap_qos,
         )
 
         # - Publishers
@@ -135,10 +128,7 @@ class LidarTemplateMatcherNode(Node):
             # 1. Load scene & rotate floor to XY plane
             scene = self._load_scene()
 
-            # 2. Remove floor plane
-            #scene = self._remove_floor(scene)
-
-            # 3b. Costmap filter — keep only obstacle-region points
+            # 2. Costmap filter — keep only obstacle-region points
             scene = self._filter_by_costmap(scene, threshold=99)
 
             if len(scene.points) < 100:
@@ -168,11 +158,6 @@ class LidarTemplateMatcherNode(Node):
             # 6. FGR global registration (coarse)
             #fgr = self._fgr(template_down, scene_down, template_fpfh, scene_fpfh)
             fgr = self._ransac(template_down, scene_down, template_fpfh, scene_fpfh)
-
-            #self.get_logger().info(f'Scene FPFH shape: {np.asarray(scene_fpfh.data).shape}')
-            #self.get_logger().info(f'Template FPFH shape: {np.asarray(template_fpfh.data).shape}')
-            #self.get_logger().info(f'Scene points: {len(scene_down.points)}')
-            #self.get_logger().info(f'Template points: {len(template_down.points)}')
 
             # If no correspondences found, FGR failed to find any matches at all
             if len(fgr.correspondence_set) == 0 or fgr.fitness < 0.05:
@@ -204,18 +189,6 @@ class LidarTemplateMatcherNode(Node):
             final_T = fgr.transformation
             final_T = np.array(final_T)
 
-            # Rotate result by 90 degree around z-axis to match the template's forward direction with the car's forward direction in the scene
-            #R = np.array([[np.cos(-np.pi/2), -np.sin(-np.pi/2), 0], [np.sin(-np.pi/2), np.cos(-np.pi/2),0], [0,0,1]])
-            #final_T[:3, :3] = final_T[:3, :3] @ R
-
-
-            # Store final position as (x, y, yaw) for later use
-            #final_pos = np.array([final_T[0, 3], final_T[1, 3], np.arctan2(final_T[2, 1], final_T[1, 1]) - np.pi/2])
-
-            #final_R = np.array([[np.cos(final_pos[2]), -np.sin(final_pos[2]), 0], [np.sin(final_pos[2]), np.cos(final_pos[2]),0], [0,0,1]])
-            #final_T[:3, :3] = final_R
-            #final_T[:3, 2] = 0
-
             self.get_logger().info(
                 f'Template centroid: {self.template_centroid}\n'
                 f'Final T:\n{final_T}\n'
@@ -224,11 +197,7 @@ class LidarTemplateMatcherNode(Node):
                 f'RANSAC fitness: {fgr.fitness:.4f}  correspondences: {len(fgr.correspondence_set)}'
             )
 
-            # Publish the 2D pose (x, y, theta) for use by other nodes
-            #self._publish_pose_2D(final_T)
-
             # Save transform matrix as numpy array for later use 
-            # THIS IS THE ONE TO UNCOMMENT
             self._save_transform(final_T)
 
             # 9. Publish pose
@@ -264,6 +233,7 @@ class LidarTemplateMatcherNode(Node):
             f'Z=[{pts[:,2].min():.2f}, {pts[:,2].max():.2f}]'
         )
         return pcd
+    
 
     def _align_floor(self, points: np.ndarray):
         """
@@ -307,48 +277,9 @@ class LidarTemplateMatcherNode(Node):
         T[2, 3] = -floor_z
 
         return rotated, T
-
-    # Step 2 - Remove floor plane
-
-    def _remove_floor(self, pcd: o3d.geometry.PointCloud,
-                      dist_thresh=0.06) -> o3d.geometry.PointCloud:
-        """
-        Segment the dominant plane (floor) and return only the non-floor points.
-        After _align_floor the floor is at Z≈0, so a tight threshold works well.
-        """
-        _, inliers = pcd.segment_plane(
-            distance_threshold=dist_thresh, ransac_n=3, num_iterations=2000)
-
-        no_floor = pcd.select_by_index(inliers, invert=True)
-
-        self.get_logger().info(
-            f'Floor removal: {len(inliers)} floor pts removed, '
-            f'{len(no_floor.points)} remaining'
-        )
-        return no_floor
     
-    # Step 3 - Z-height filter
-
-    def _filter_z(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
-        """
-        Keep only points within [z_min, z_max] above the floor.
-
-        Why this matters for WALLR1.pcd:
-          - 1.93 M points spread across Z = -7 → +4 m
-          - The RC car sits in Z ≈ 0 → 0.7 m (after floor alignment)
-          - Wall returns, ceiling, and ground noise outside this band
-            pollute FPFH features and pull ICP to the wrong solution
-        """
-        pts = np.asarray(pcd.points)
-        mask = (pts[:, 2] >= self.z_min) & (pts[:, 2] <= self.z_max)
-        filtered = pcd.select_by_index(np.where(mask)[0])
-
-        self.get_logger().info(
-            f'Z-filter [{self.z_min:.2f}, {self.z_max:.2f}] m: '
-            f'{len(pcd.points):,} → {len(filtered.points):,} pts'
-        )
-        return filtered
-
+    # Step 2 - Costmap filter
+    
     def _filter_by_costmap(self, pcd: o3d.geometry.PointCloud,
                             threshold: int = 253) -> o3d.geometry.PointCloud:
         """Keep only points whose (x, y) falls in a costmap cell >= threshold."""
@@ -400,6 +331,8 @@ class LidarTemplateMatcherNode(Node):
     def _wait_for_latest_costmap_npy(self) -> np.ndarray:
         if self._costmap_coords_dir is None:
             raise RuntimeError('Cost_Map_Coordinates folder not found')
+
+        self.get_logger().info(f'Waiting for .npy costmap files in: {self._costmap_coords_dir}')
 
         while True:
             npy_files = sorted(
@@ -470,6 +403,23 @@ class LidarTemplateMatcherNode(Node):
         res_x = infer(xs)
         res_y = infer(ys)
         return min(res_x, res_y) if res_x and res_y else max(res_x, res_y, 0.05)
+
+    # Step 3 - Z-height filter
+
+    def _filter_z(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+        """
+        Keep only points within [z_min, z_max] above the floor.
+        """
+        pts = np.asarray(pcd.points)
+        mask = (pts[:, 2] >= self.z_min) & (pts[:, 2] <= self.z_max)
+        filtered = pcd.select_by_index(np.where(mask)[0])
+
+        self.get_logger().info(
+            f'Z-filter [{self.z_min:.2f}, {self.z_max:.2f}] m: '
+            f'{len(pcd.points):,} → {len(filtered.points):,} pts'
+        )
+        return filtered
+
 
     # Step 4 - Load & downsample template
 
@@ -674,19 +624,6 @@ class LidarTemplateMatcherNode(Node):
         self.pose_pub.publish(msg)
         self.get_logger().info(
             f'Published pose: x={T[0,3]:.3f}  y={T[1,3]:.3f}  z={T[2,3]:.3f}'
-        )
-
-    def _publish_pose_2D(self, pose):
-        msg = Pose2D()
-
-        msg.x = pose[0]
-        msg.y = pose[1]
-        msg.theta = pose[2]
-
-        self.publisher_.publish(msg)
-
-        self.get_logger().info(
-            f'Publishing: x={msg.x}, y={msg.y}, theta={msg.theta}'
         )
 
     def _save_transform(self, T: np.ndarray):

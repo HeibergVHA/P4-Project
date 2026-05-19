@@ -24,9 +24,10 @@ def generate_launch_description():
         package='Cost_Map',
         executable='lidar_costmap_node',
         name='lidar_costmap_node',
-        output='screen',
-
-        parameters=[
+        output='screen' # ,
+    )
+    """
+    parameters=[
             {
                 'pcd_file_path': 'src/Cost_Map/resource/WALLR1.pcd',
                 'map_frame_id': 'map',
@@ -38,21 +39,22 @@ def generate_launch_description():
                 'min_filter_size': 2,
             }
         ]
-    )
+    """
 
     template_matcher_node = Node(
         package='Cost_Map',
         executable='lidar_template_matcher_node',
         name='lidar_template_matcher_node',
-        output='screen',
-
-        parameters=[
+        output='screen' # ,
+    )
+    """
+    parameters=[
             {
                 'scene_file': scene_file,
                 'template_file': template_file,
             }
         ]
-    )
+    """
 
     rover_trajectory_planner_node = Node(
         package='Cost_Map',

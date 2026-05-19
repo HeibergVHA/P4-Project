@@ -85,11 +85,11 @@ class LidarCostmapGenerator(Node):
 
     def _declare_parameters(self):
         """Register all node parameters with their default values."""
-        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/WALLR2.pcd')
+        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
-        self.declare_parameter('inflation_radius_meters',   0.2) # 0.05
-        self.declare_parameter('flat_caution_threshold',    0.01)
+        self.declare_parameter('inflation_radius_meters',   0.05) # 0.05
+        self.declare_parameter('flat_caution_threshold',    0.03)
         self.declare_parameter('caution_obstacle_threshold', 0.08)
         # Neighbourhood size for the local-extrema filters used in roughness estimation.
         # Larger values smooth noise but may blur small obstacles.
