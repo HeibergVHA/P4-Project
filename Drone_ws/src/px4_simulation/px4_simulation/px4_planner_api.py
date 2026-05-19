@@ -4,7 +4,6 @@ from px4_msgs.msg import (ActuatorMotors, OffboardControlMode, VehicleCommand,
                           VehicleAttitudeSetpoint, VehicleOdometry, TrajectorySetpoint)
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 import numpy as np
-from control import TransferFunction, step_response
 
 class MotorCommander(Node):
     def __init__(self):
