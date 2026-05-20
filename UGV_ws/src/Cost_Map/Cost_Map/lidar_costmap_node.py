@@ -85,10 +85,10 @@ class LidarCostmapGenerator(Node):
 
     def _declare_parameters(self):
         """Register all node parameters with their default values."""
-        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud.pcd')
+        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud1.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
-        self.declare_parameter('inflation_radius_meters',   0.05) # 0.05
+        self.declare_parameter('inflation_radius_meters',   0.2) # 0.05
         self.declare_parameter('flat_caution_threshold',    0.03)
         self.declare_parameter('caution_obstacle_threshold', 0.08)
         # Neighbourhood size for the local-extrema filters used in roughness estimation.
@@ -176,12 +176,12 @@ class LidarCostmapGenerator(Node):
         master    = np.maximum(static, inflation)
 
         self._publish_costmap(master, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
-        #self._save_costmap_to_npy(master, min_bound)
-
-        # Pass the grid directly — no subscription needed
-        points = self._filter_by_costmap_grid(points, master, min_bound, threshold=99)
+        self._save_costmap_to_npy(master, min_bound)
 
         self._publish_pointcloud(points)
+
+        # Pass the grid directly — no subscription needed
+        #points = self._filter_by_costmap_grid(points, master, min_bound, threshold=99)
 
         response.success = True
         response.message = f"Costmaps generated: {width_cells}x{height_cells} cells"

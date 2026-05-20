@@ -54,14 +54,14 @@ class LidarTemplateMatcherNode(Node):
             pkg = os.path.join(os.getcwd(), 'src', 'Cost_Map')
 
         self.declare_parameter('scene_file',
-            os.path.join(pkg, 'resource', 'scene_cloud.pcd'))
+            os.path.join(pkg, 'resource', 'scene_cloud1.pcd'))
         self.declare_parameter('template_file',
             os.path.join(pkg, 'resource', 'rc_car_template.pcd'))
 
         # Voxel leaf size (metres).
         # 0.02 m works well for a 1.9 M-point scene — coarse enough for
         # distinctive FPFH features, fine enough to resolve the car shape.
-        self.declare_parameter('voxel_size', 0.02)
+        self.declare_parameter('voxel_size', 0.04)
 
         # Z band to keep after floor removal (metres, relative to floor = 0).
         # The RC-car template sits at z ≈ -0.50 → +0.18 before floor
@@ -170,23 +170,23 @@ class LidarTemplateMatcherNode(Node):
 
             # 7. Crop scene to FGR bounding box — keeps ICP from drifting
             #scene_cropped = self._crop_around_result(scene_down, template_down, fgr.transformation)
-            """scene_cropped = self._crop_around_result(
+            scene_cropped = self._crop_around_result(
                 scene,
                 template_down,
                 fgr.transformation
             )
             self.get_logger().info(
                 f'Scene cropped to {len(scene_cropped.points)} pts around FGR result'
-            )"""
+            )
 
             # 8. Multi-scale ICP refinement (fine)
-            #icp = self._icp(template_down, scene_down, fgr.transformation)
+            icp = self._icp(template_down, scene_cropped, fgr.transformation)
             #icp = fgr.transformation
             #self.get_logger().info(f'ICP   fitness={icp.fitness:.4f}  rmse={icp.inlier_rmse:.4f}')
 
             # Use ICP result if it improved on FGR, otherwise keep FGR
-            #final_T = icp.transformation if icp.fitness >= fgr.fitness else fgr.transformation
-            final_T = fgr.transformation
+            final_T = icp.transformation if icp.fitness >= fgr.fitness else fgr.transformation
+            #final_T = fgr.transformation
             final_T = np.array(final_T)
 
             self.get_logger().info(
@@ -194,7 +194,8 @@ class LidarTemplateMatcherNode(Node):
                 f'Final T:\n{final_T}\n'
                 f'Translation: [{final_T[0,3]:.3f}, {final_T[1,3]:.3f}, {final_T[2,3]:.3f}]\n'
                 f'Scene pts after filter: {len(scene.points)}\n'
-                f'RANSAC fitness: {fgr.fitness:.4f}  correspondences: {len(fgr.correspondence_set)}'
+                f'RANSAC fitness: {fgr.fitness:.4f}  correspondences: {len(fgr.correspondence_set)}\n'
+                f'ICP fitness: {icp.fitness:.4f}  correspondences: {len(icp.correspondence_set)}'
             )
 
             # Save transform matrix as numpy array for later use 
@@ -205,8 +206,9 @@ class LidarTemplateMatcherNode(Node):
 
             response.success = True
             response.message = (
-                f'Match complete. '
-                f'FGR fitness={fgr.fitness:.3f}' #  ICP fitness={icp.fitness:.3f
+                f'Match complete. \n'
+                f'RANSAC fitness={fgr.fitness:.3f} \n'
+                f'ICP fitness={icp.fitness:.3f}'
             )
 
         except Exception as e:
@@ -454,7 +456,7 @@ class LidarTemplateMatcherNode(Node):
                 radius=self.voxel_size, max_nn=50))
 
         down.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size * 2, max_nn=50))
+            o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size * 4, max_nn=50))
 
         # Consistent orientation — required for Point-to-Plane ICP
         #down.orient_normals_consistent_tangent_plane(k=15)
@@ -463,7 +465,7 @@ class LidarTemplateMatcherNode(Node):
         # distinctive descriptors; 100 neighbours caps memory usage
         fpfh = o3d.pipelines.registration.compute_fpfh_feature(
             down,
-            o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size * 5, max_nn=100))
+            o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size * 8, max_nn=200))
 
         return down, fpfh
 
@@ -508,13 +510,13 @@ class LidarTemplateMatcherNode(Node):
         """
         best = None
 
-        for _ in range(10):
+        for _ in range(1):
             result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
                 src_down,
                 tgt_down,
                 src_fpfh,
                 tgt_fpfh,
-                mutual_filter=True,
+                mutual_filter=False,
                 max_correspondence_distance=self.voxel_size * 5,
                 estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
                 ransac_n=4,
@@ -567,15 +569,18 @@ class LidarTemplateMatcherNode(Node):
         """
         T = init_T
         for scale in [1.0, 0.5, 0.25]:
-            dist = self.voxel_size * scale
             result = o3d.pipelines.registration.registration_icp(
-                src, tgt,
-                max_correspondence_distance=dist,
-                init=T,
-                estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-                criteria=o3d.pipelines.registration.ICPConvergenceCriteria(
-                    relative_fitness=1e-6, relative_rmse=1e-6, max_iteration=100),
-            )
+            src,
+            tgt,
+            max_correspondence_distance=scale,
+            init=T,
+            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+            criteria=o3d.pipelines.registration.ICPConvergenceCriteria(
+                relative_fitness=1e-6,
+                relative_rmse=1e-6,
+                max_iteration=20
+            ),
+        )
             T = result.transformation
 
         return result
