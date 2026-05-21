@@ -24,6 +24,7 @@ class NavigationNode(Node):
 
         # ── Load costmap ──────────────────────────────────────────────────
         raw = self._load_latest_costmap("src/Cost_Map/Cost_Map_Coordinates")
+        raw_pos = self._load_latest_templateMatch("src/Cost_Map/TemplateMatching")
 
         self._res   = 0.05
         self._min_x = raw[:, 0].min()
@@ -47,7 +48,9 @@ class NavigationNode(Node):
 
         # ── Start / goal (world coords → grid cells) ──────────────────────
         # Change these to your desired world-frame waypoints.
-        start_world = (0.0,  0.0)
+        #start_world = (0.0,  0.0)
+        #raw_pos = np.array(raw_pos)
+        start_world = (raw_pos[3,0], raw_pos[3,1])
         goal_world  = (10.0, 3.0)
 
         self.start = self._world_to_grid(*start_world)
@@ -195,6 +198,14 @@ class NavigationNode(Node):
             raise FileNotFoundError(f"No costmap_*.npy files found in '{folder}'")
         latest = max(files, key=os.path.getmtime)
         self.get_logger().info(f"Loading costmap: {latest}")
+        return np.load(latest)
+    
+    def _load_latest_templateMatch(self, folder: str) -> np.ndarray:
+        files = glob.glob(os.path.join(folder, "T_rover*.npy"))
+        if not files:
+            raise FileNotFoundError(f"No T_rover*.npy files found in '{folder}'")
+        latest = max(files, key=os.path.getmtime)
+        self.get_logger().info(f"Loading template match: {latest}")
         return np.load(latest)
     
     def _cells_from_start(self, row: int, col: int) -> float:
