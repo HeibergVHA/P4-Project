@@ -88,7 +88,7 @@ class LidarCostmapGenerator(Node):
         self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud1.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
-        self.declare_parameter('inflation_radius_meters',   0.2) # 0.05
+        self.declare_parameter('inflation_radius_meters',   0.30) # The buffer zone between an obstacle or caution cell.
         self.declare_parameter('flat_caution_threshold',    0.03)
         self.declare_parameter('caution_obstacle_threshold', 0.08)
         # Neighbourhood size for the local-extrema filters used in roughness estimation.
@@ -175,8 +175,11 @@ class LidarCostmapGenerator(Node):
         inflation = self._build_inflation_layer(static)
         master    = np.maximum(static, inflation)
 
-        self._publish_costmap(master, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
-        self._save_costmap_to_npy(master, min_bound)
+        # Do erosion and dilation (close operation) to clean up the master layer before publishing and saving.
+        master_closed = cv2.morphologyEx(master, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
+
+        self._publish_costmap(master_closed, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
+        self._save_costmap_to_npy(master_closed, min_bound)
 
         self._publish_pointcloud(points)
 
