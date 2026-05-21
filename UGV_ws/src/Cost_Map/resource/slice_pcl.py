@@ -16,7 +16,7 @@ def remove_ground(pcd):
     print("Removing ground plane...")
 
     plane_model, inliers = pcd.segment_plane(
-        distance_threshold=0.06,
+        distance_threshold=0.06, # CHANGE THIS VALUE TO EITHER 0.03 OR 0.06 !!!!!
         ransac_n=3,
         num_iterations=1000
     )

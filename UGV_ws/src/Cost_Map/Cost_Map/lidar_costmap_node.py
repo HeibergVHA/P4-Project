@@ -175,8 +175,8 @@ class LidarCostmapGenerator(Node):
         inflation = self._build_inflation_layer(static)
         master    = np.maximum(static, inflation)
 
-        # Do erosion and dilation (close operation) to clean up the master layer before publishing and saving.
-        master_closed = cv2.morphologyEx(master, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
+        # Do dilation and erosion (close operation) to clean up the master layer before publishing and saving.
+        master_closed = cv2.morphologyEx(master, cv2.MORPH_OPEN, np.ones((3, 3), dtype=np.uint8))
 
         self._publish_costmap(master_closed, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
         self._save_costmap_to_npy(master_closed, min_bound)

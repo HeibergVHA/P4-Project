@@ -6,7 +6,7 @@ import matplotlib.patches as patches
 import scipy.stats as stats
 
 # Find all .npy files in the execution directory
-npy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "*.npy"))) # "test_2",
+npy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "test_03", "*.npy"))) #"test_06", 
 
 if not npy_files:
     raise FileNotFoundError("No .npy files found in the execution directory.")
@@ -14,7 +14,7 @@ if not npy_files:
 # Load all .npy files and stack into a single 3D array of shape (N, 4, 4)
 data = np.stack([np.load(f) for f in npy_files], axis=0)
 
-print(f"Loaded {len(npy_files)} file(s): {[os.path.basename(f) for f in npy_files]}")
+#print(f"Loaded {len(npy_files)} file(s): {[os.path.basename(f) for f in npy_files]}")
 print(f"Combined array shape: {data.shape}, dtype: {data.dtype}")
 
 # Access individual transform matrices by index, e.g.:
@@ -66,13 +66,18 @@ prediction_interval_y = (
     np.mean(vector[:, 1]) + prediction_margin_y
 )
 
-plt.axvline(prediction_interval_x[0], linestyle='--', color='blue')
-plt.axvline(prediction_interval_x[1], linestyle='--', color='blue')
-plt.axvline(prediction_interval_y[0], linestyle='--', color='red')
-plt.axvline(prediction_interval_y[1], linestyle='--', color='red')
+print(f"95% Prediction Interval for X: {prediction_interval_x}")
+print(f"95% Prediction Interval for Y: {prediction_interval_y}")
+print(f"mean X: {mu_X}, std X: {std_X}")
+print(f"mean Y: {mu_Y}, std Y: {std_Y}")
 
-plt.plot(x_linspace, stats.norm.pdf(x_linspace, mu_X, std_X), 'b-', linewidth=2)
-plt.plot(y_linspace, stats.norm.pdf(y_linspace, mu_Y, std_Y), 'r-', linewidth=2)
+#plt.axvline(prediction_interval_x[0], linestyle='--', color='blue')
+#plt.axvline(prediction_interval_x[1], linestyle='--', color='blue')
+#plt.axvline(prediction_interval_y[0], linestyle='--', color='red')
+#plt.axvline(prediction_interval_y[1], linestyle='--', color='red')
+
+#plt.plot(x_linspace, stats.norm.pdf(x_linspace, mu_X, std_X), 'b-', linewidth=2)
+#plt.plot(y_linspace, stats.norm.pdf(y_linspace, mu_Y, std_Y), 'r-', linewidth=2)
 
 hist_x = np.histogram(vector[:, 0], bins=20)
 hist_y = np.histogram(vector[:, 1], bins=20)

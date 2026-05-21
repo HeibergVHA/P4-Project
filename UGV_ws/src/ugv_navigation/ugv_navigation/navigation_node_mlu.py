@@ -50,7 +50,9 @@ class NavigationNode(Node):
         # Change these to your desired world-frame waypoints.
         #start_world = (0.0,  0.0)
         #raw_pos = np.array(raw_pos)
-        start_world = (raw_pos[3,0], raw_pos[3,1])
+        self.get_logger().info(f"Template match raw position: {raw_pos[3]}")
+
+        start_world = (raw_pos[0][3], raw_pos[1][3])
         goal_world  = (10.0, 3.0)
 
         self.start = self._world_to_grid(*start_world)
