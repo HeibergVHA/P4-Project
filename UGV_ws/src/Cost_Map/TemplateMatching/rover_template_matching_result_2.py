@@ -6,7 +6,7 @@ import matplotlib.patches as patches
 import scipy.stats as stats
 
 # Find all .npy files in the execution directory
-npy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "test_03", "*.npy"))) #"test_06", 
+npy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "test_06", "*.npy"))) #"test_06", 
 
 if not npy_files:
     raise FileNotFoundError("No .npy files found in the execution directory.")

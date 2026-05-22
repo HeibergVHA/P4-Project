@@ -21,7 +21,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 import open3d as o3d
-from scipy.ndimage import maximum_filter, minimum_filter
+from scipy.ndimage import laplace, maximum_filter, minimum_filter
+from scipy.ndimage import gaussian_filter, laplace
 
 import rclpy
 from rclpy.node import Node
@@ -85,10 +86,10 @@ class LidarCostmapGenerator(Node):
 
     def _declare_parameters(self):
         """Register all node parameters with their default values."""
-        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud1.pcd')
+        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud3.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
-        self.declare_parameter('inflation_radius_meters',   0.30) # The buffer zone between an obstacle or caution cell.
+        self.declare_parameter('inflation_radius_meters',   0.00) # The buffer zone between an obstacle or caution cell.
         self.declare_parameter('flat_caution_threshold',    0.03)
         self.declare_parameter('caution_obstacle_threshold', 0.08)
         # Neighbourhood size for the local-extrema filters used in roughness estimation.
@@ -176,10 +177,10 @@ class LidarCostmapGenerator(Node):
         master    = np.maximum(static, inflation)
 
         # Do dilation and erosion (close operation) to clean up the master layer before publishing and saving.
-        master_closed = cv2.morphologyEx(master, cv2.MORPH_OPEN, np.ones((3, 3), dtype=np.uint8))
+        #master_closed = cv2.morphologyEx(master, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
 
-        self._publish_costmap(master_closed, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
-        self._save_costmap_to_npy(master_closed, min_bound)
+        self._publish_costmap(master, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
+        self._save_costmap_to_npy(master, min_bound)
 
         self._publish_pointcloud(points)
 
@@ -396,8 +397,18 @@ class LidarCostmapGenerator(Node):
             maximum_filter(elevation_map, size=self.max_filter_size) -
             minimum_filter(elevation_map, size=self.min_filter_size)
         )
+        #smoothed  = gaussian_filter(elevation_map, sigma=1.0)
+        #roughness = np.abs(laplace(smoothed))
+
+        #dzdx = np.gradient(elevation_map, axis=1) / self.costmap_resolution
+        #dzdy = np.gradient(elevation_map, axis=0) / self.costmap_resolution
+
+        # Angle between surface normal and vertical [0,0,1]
+        #roughness = np.arctan(np.sqrt(dzdx**2 + dzdy**2))   # radians
 
         static = np.full(elevation_map.shape, -1, dtype=np.int16)
+        #self.flat_caution_threshold = np.deg2rad(10)  # convert to radians
+        #self.caution_obstacle_threshold = np.deg2rad(30)  # convert to radians
 
         static[has_data & (roughness <= self.flat_caution_threshold)]       = COST_FREE
         static[has_data & (roughness >  self.flat_caution_threshold) &
