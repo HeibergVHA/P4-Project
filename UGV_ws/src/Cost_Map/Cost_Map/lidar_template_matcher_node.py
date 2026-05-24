@@ -54,7 +54,7 @@ class LidarTemplateMatcherNode(Node):
             pkg = os.path.join(os.getcwd(), 'src', 'Cost_Map')
 
         self.declare_parameter('scene_file',
-            os.path.join(pkg, 'resource', 'scene_cloud1.pcd'))
+            os.path.join(pkg, 'resource', 'scene_cloud3.pcd'))
         self.declare_parameter('template_file',
             os.path.join(pkg, 'resource', 'rc_car_template.pcd'))
 
@@ -227,6 +227,11 @@ class LidarTemplateMatcherNode(Node):
 
         pts = np.asarray(pcd.points, dtype=np.float64)
         pts, self.floor_T = self._align_floor(pts)
+        pts = self._unwrap_curved_surface(
+                pts,
+                tall_object_z_threshold=0.2,   # metres — tune to just below your box height
+                poly_degree=3,
+            )
         pcd.points = o3d.utility.Vector3dVector(pts)
 
         self.get_logger().info(
@@ -236,6 +241,70 @@ class LidarTemplateMatcherNode(Node):
         )
         return pcd
     
+    def _unwrap_curved_surface(
+        self,
+        points: np.ndarray,
+        tall_object_z_threshold: float = 0.3,
+        poly_degree: int = 3,
+    ) -> np.ndarray:
+        """
+        Flatten a gently curved terrain surface by fitting a smooth polynomial
+        to the floor points and subtracting it from all points.
+
+        Tall objects (boxes) are identified by Z height and excluded from the
+        polynomial fit so they do not distort the reference surface. Their
+        relative Z values above the local floor are preserved.
+
+        Args:
+            points:                 Nx3 numpy array of aligned point cloud.
+            tall_object_z_threshold: Points with Z above this value (in metres)
+                                    are treated as tall objects and excluded
+                                    from the surface fit.
+            poly_degree:            Degree of the bivariate polynomial surface.
+                                    2 = quadratic (gentle curves),
+                                    3 = cubic (more complex terrain).
+        Returns:
+            unwrapped – Nx3 array with the curved floor flattened to Z ≈ 0.
+        """
+        floor_mask = points[:, 2] <= tall_object_z_threshold
+        floor_pts  = points[floor_mask]
+
+        if len(floor_pts) < 10:
+            self.get_logger().warn(
+                "Too few floor points to fit a surface — skipping unwrap."
+            )
+            return points
+
+        x, y, z = floor_pts[:, 0], floor_pts[:, 1], floor_pts[:, 2]
+
+        # Build the polynomial feature matrix for degree `poly_degree`
+        # e.g. degree 2: [1, x, y, x^2, xy, y^2]
+        def make_poly_features(px, py, degree):
+            cols = []
+            for i in range(degree + 1):
+                for j in range(degree + 1 - i):
+                    cols.append((px ** i) * (py ** j))
+            return np.column_stack(cols)
+
+        A      = make_poly_features(x, y, poly_degree)
+        coeffs, _, _, _ = np.linalg.lstsq(A, z, rcond=None)
+
+        # Evaluate the fitted surface at every point (floor + tall objects)
+        A_all       = make_poly_features(points[:, 0], points[:, 1], poly_degree)
+        z_surface   = A_all @ coeffs
+
+        unwrapped        = points.copy()
+        unwrapped[:, 2] -= z_surface
+
+        n_floor = int(np.sum(floor_mask))
+        n_tall  = len(points) - n_floor
+        self.get_logger().info(
+            f"Surface unwrap — fitted on {n_floor} floor pts, "
+            f"preserved {n_tall} tall-object pts, "
+            f"poly_degree={poly_degree}, "
+            f"z_threshold={tall_object_z_threshold}"
+        )
+        return unwrapped
 
     def _align_floor(self, points: np.ndarray):
         """
