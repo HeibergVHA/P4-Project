@@ -6,7 +6,7 @@ import matplotlib.patches as patches
 import scipy.stats as stats
 
 # Find all .npy files in the execution directory
-npy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "test_06", "*.npy"))) #"test_06", 
+npy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "test_03", "*.npy"))) #"test_06", 
 
 if not npy_files:
     raise FileNotFoundError("No .npy files found in the execution directory.")
@@ -31,8 +31,8 @@ for i in range(len(data)):
 
 plt.scatter(vector[:, 0], vector[:, 1], lw=0.2, edgecolor='r')
 plt.scatter(np.average(vector[:, 0]), np.average(vector[:, 1]), color='blue', marker='x', s=100, label='Average Position')
-plt.xlabel('X')
-plt.ylabel('Y')
+plt.xlabel('X (m)')
+plt.ylabel('Y (m)')
 plt.title('Scatter Plot of X vs Y from template matching results')
 plt.grid()
 plt.show()
@@ -82,8 +82,8 @@ print(f"mean Y: {mu_Y}, std Y: {std_Y}")
 hist_x = np.histogram(vector[:, 0], bins=20)
 hist_y = np.histogram(vector[:, 1], bins=20)
 
-plt.hist(vector[:, 0], bins=20, alpha=0.5, label='X', color='blue')
-plt.hist(vector[:, 1], bins=20, alpha=0.5, label='Y', color='red')
+plt.hist(vector[:, 0], bins=20, alpha=0.5, label='X (m)', color='blue')
+plt.hist(vector[:, 1], bins=20, alpha=0.5, label='Y (m)', color='red')
 plt.xlabel('Value')
 plt.ylabel('Count')
 plt.title('Histogram of X and Y coordinates of template matching results')

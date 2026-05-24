@@ -86,12 +86,12 @@ class LidarCostmapGenerator(Node):
 
     def _declare_parameters(self):
         """Register all node parameters with their default values."""
-        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud3.pcd')
+        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud8.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
-        self.declare_parameter('inflation_radius_meters',   0.00) # The buffer zone between an obstacle or caution cell.
-        self.declare_parameter('flat_caution_threshold',    0.03)
-        self.declare_parameter('caution_obstacle_threshold', 0.08)
+        self.declare_parameter('inflation_radius_meters',   0.30) # The buffer zone between an obstacle or caution cell.
+        self.declare_parameter('flat_caution_threshold',    0.03) # meters above ground plane
+        self.declare_parameter('caution_obstacle_threshold', 0.08) # meters above ground plane
         # Neighbourhood size for the local-extrema filters used in roughness estimation.
         # Larger values smooth noise but may blur small obstacles.
         self.declare_parameter('max_filter_size', 2)
@@ -178,6 +178,7 @@ class LidarCostmapGenerator(Node):
 
         # Do dilation and erosion (close operation) to clean up the master layer before publishing and saving.
         #master_closed = cv2.morphologyEx(master, cv2.MORPH_CLOSE, np.ones((3, 3), dtype=np.uint8))
+        master = cv2.medianBlur(master, ksize=3)
 
         self._publish_costmap(master, width_cells, height_cells, min_bound, '/master_costmap', self.pub_master)
         self._save_costmap_to_npy(master, min_bound)
@@ -192,6 +193,71 @@ class LidarCostmapGenerator(Node):
         self.get_logger().info(response.message)
         return response
 
+
+    def _unwrap_curved_surface(
+        self,
+        points: np.ndarray,
+        tall_object_z_threshold: float = 0.3,
+        poly_degree: int = 3,
+    ) -> np.ndarray:
+        """
+        Flatten a gently curved terrain surface by fitting a smooth polynomial
+        to the floor points and subtracting it from all points.
+
+        Tall objects (boxes) are identified by Z height and excluded from the
+        polynomial fit so they do not distort the reference surface. Their
+        relative Z values above the local floor are preserved.
+
+        Args:
+            points:                 Nx3 numpy array of aligned point cloud.
+            tall_object_z_threshold: Points with Z above this value (in metres)
+                                    are treated as tall objects and excluded
+                                    from the surface fit.
+            poly_degree:            Degree of the bivariate polynomial surface.
+                                    2 = quadratic (gentle curves),
+                                    3 = cubic (more complex terrain).
+        Returns:
+            unwrapped – Nx3 array with the curved floor flattened to Z ≈ 0.
+        """
+        floor_mask = points[:, 2] <= tall_object_z_threshold
+        floor_pts  = points[floor_mask]
+
+        if len(floor_pts) < 10:
+            self.get_logger().warn(
+                "Too few floor points to fit a surface — skipping unwrap."
+            )
+            return points
+
+        x, y, z = floor_pts[:, 0], floor_pts[:, 1], floor_pts[:, 2]
+
+        # Build the polynomial feature matrix for degree `poly_degree`
+        # e.g. degree 2: [1, x, y, x^2, xy, y^2]
+        def make_poly_features(px, py, degree):
+            cols = []
+            for i in range(degree + 1):
+                for j in range(degree + 1 - i):
+                    cols.append((px ** i) * (py ** j))
+            return np.column_stack(cols)
+
+        A      = make_poly_features(x, y, poly_degree)
+        coeffs, _, _, _ = np.linalg.lstsq(A, z, rcond=None)
+
+        # Evaluate the fitted surface at every point (floor + tall objects)
+        A_all       = make_poly_features(points[:, 0], points[:, 1], poly_degree)
+        z_surface   = A_all @ coeffs
+
+        unwrapped        = points.copy()
+        unwrapped[:, 2] -= z_surface
+
+        n_floor = int(np.sum(floor_mask))
+        n_tall  = len(points) - n_floor
+        self.get_logger().info(
+            f"Surface unwrap — fitted on {n_floor} floor pts, "
+            f"preserved {n_tall} tall-object pts, "
+            f"poly_degree={poly_degree}, "
+            f"z_threshold={tall_object_z_threshold}"
+        )
+        return unwrapped
 
     def _filter_by_costmap(self, points: np.ndarray,
                             threshold: int = 99) -> np.ndarray:
@@ -266,6 +332,11 @@ class LidarCostmapGenerator(Node):
 
             points = np.asarray(pcd.points)
             points, _transform, _plane = self._align_floor_to_xy_plane(points)
+            #points = self._unwrap_curved_surface(
+            #    points,
+            #    tall_object_z_threshold=0.3,   # metres — tune to just below your box height
+            #    poly_degree=3,
+            #)
             pcd.points = o3d.utility.Vector3dVector(points)
 
             min_bound = points.min(axis=0)
@@ -375,6 +446,7 @@ class LidarCostmapGenerator(Node):
             where=z_counts != 0,
         )
         has_data = z_counts > 0
+
         return elevation_map, has_data
 
     # - Costmap layer construction
@@ -397,18 +469,8 @@ class LidarCostmapGenerator(Node):
             maximum_filter(elevation_map, size=self.max_filter_size) -
             minimum_filter(elevation_map, size=self.min_filter_size)
         )
-        #smoothed  = gaussian_filter(elevation_map, sigma=1.0)
-        #roughness = np.abs(laplace(smoothed))
-
-        #dzdx = np.gradient(elevation_map, axis=1) / self.costmap_resolution
-        #dzdy = np.gradient(elevation_map, axis=0) / self.costmap_resolution
-
-        # Angle between surface normal and vertical [0,0,1]
-        #roughness = np.arctan(np.sqrt(dzdx**2 + dzdy**2))   # radians
 
         static = np.full(elevation_map.shape, -1, dtype=np.int16)
-        #self.flat_caution_threshold = np.deg2rad(10)  # convert to radians
-        #self.caution_obstacle_threshold = np.deg2rad(30)  # convert to radians
 
         static[has_data & (roughness <= self.flat_caution_threshold)]       = COST_FREE
         static[has_data & (roughness >  self.flat_caution_threshold) &
