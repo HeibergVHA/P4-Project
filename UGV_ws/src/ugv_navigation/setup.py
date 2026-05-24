@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'navigation_node = ugv_navigation.navigation_node:main',
+            'navigation_node2 = ugv_navigation.navigation_node2:main',
         ],
     },
 )
