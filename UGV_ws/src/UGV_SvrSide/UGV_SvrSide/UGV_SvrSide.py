@@ -243,9 +243,11 @@ class UGV_SvrSide(Node):
         super().destroy_node()
 
     def trigger_start_reading(self):
-        request = Trigger.Request()
-        future = self.start_reading_client.call_async(request)
-        future.add_done_callback(self.start_reading_response_cb)
+        # request = Trigger.Request()
+        # future = self.start_reading_client.call_async(request)
+        # future.add_done_callback(self.start_reading_response_cb)
+        return
+        
     
     def start_reading_response_cb(self, future):
         result = future.result()

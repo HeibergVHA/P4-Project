@@ -12,7 +12,6 @@ import heapq
 import time
 
 
-# ── Paste your 100 TEST_CASES dict here, at module level ─────────────────────
 TEST_CASES = {
       1: {"start": (590, 69), "goal": ( 81,689), "obs_pct": 0.21, "straight_dist_m": 40.1},
       2: {"start": ( 17,727), "goal": (686,382), "obs_pct": 0.22, "straight_dist_m": 37.6},
@@ -157,8 +156,8 @@ class NavigationNode(Node):
         self.g_score   = {}
         self.came_from = {}
 
-        self.start = (0, 0)
-        self.goal  = (10, 10)
+        self.start = (590, 69)
+        self.goal  = (81, 689)
 
         qos = QoSProfile(depth=1)
         qos.durability = DurabilityPolicy.TRANSIENT_LOCAL

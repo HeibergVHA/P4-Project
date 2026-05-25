@@ -56,7 +56,7 @@ class Drone_Cltside(Node):
         # parameters
         self.declare_parameter('host', '0.0.0.0')
         self.declare_parameter('port', 12347)
-        self.declare_parameter('bag_path', '/ros2_ws/bags/scan_20240617_153000') # default bag path, can be overridden by parameter
+        self.declare_parameter('bag_path', '/ros2_ws/bags/scan_20260517_115246') # default bag path, can be overridden by parameter
 
         # state
         self._sock: socket.socket | None = None
@@ -169,6 +169,11 @@ class Drone_Cltside(Node):
             return False, 'Not connected.'
 
         bag_path = self.bag_name
+
+        if bag_path is None:
+            bag_path = self.get_parameter(
+                'bag_path'
+            ).get_parameter_value().string_value
         # Check the bag directory actually exists before trying to send
         if not os.path.isdir(bag_path):
             return False, f'Bag path does not exist: {bag_path}'
@@ -248,9 +253,10 @@ class Drone_Cltside(Node):
         super().destroy_node()
 
     def trigger_start_recording(self):
-        request = Trigger.Request()
-        future = self.start_recording_client.call_async(request)
-        future.add_done_callback(self.start_recording_response_cb)
+        # request = Trigger.Request()
+        # future = self.start_recording_client.call_async(request)
+        # future.add_done_callback(self.start_recording_response_cb)
+        return
 
     def start_recording_response_cb(self, future):
         result = future.result()
@@ -262,10 +268,11 @@ class Drone_Cltside(Node):
             self.get_logger().error(f'Failed to trigger start recording: {result.message}')
 
     def trigger_stop_recording(self):
-        self.recording_timer.cancel()
-        request = Trigger.Request()
-        future = self.stop_recording_client.call_async(request)
-        future.add_done_callback(self.stop_recording_response_cb)
+        # self.recording_timer.cancel()
+        # request = Trigger.Request()
+        # future = self.stop_recording_client.call_async(request)
+        # future.add_done_callback(self.stop_recording_response_cb)
+        return
 
     def stop_recording_response_cb(self, future):
         result = future.result()
