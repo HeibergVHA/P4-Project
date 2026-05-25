@@ -10,6 +10,7 @@ from std_msgs.msg import Float32, Float32MultiArray, MultiArrayDimension
 from std_srvs.srv import Trigger
 import os
 import zipfile
+import time
 
 
 class UGV_SvrSide(Node):
@@ -44,6 +45,7 @@ class UGV_SvrSide(Node):
         self.declare_parameter('host',          '0.0.0.0')
         self.declare_parameter('port',          12347)
         self.declare_parameter('save_path',  '/ros2_ws/bags')
+        self.declare_parameter('benchmark', False) # If true, runs a benchmark of 100 consecutive transfers and logs times
 
 
 
@@ -99,7 +101,20 @@ class UGV_SvrSide(Node):
                 self._connected   = True
             self.get_logger().info(f'Client connected: {addr}')
 
-            self.receive_bag()
+            n = 100 if self.get_parameter('benchmark').get_parameter_value().bool_value else 1
+            times = []
+            for i in range(n):
+                t0 = time.perf_counter()
+                self.receive_bag()
+                dt = time.perf_counter() - t0
+                times.append(dt)
+                if n > 1:
+                    self.get_logger().info(f'[Benchmark {i+1}/{n}] Received in {dt:.2f}s')
+            if n > 1:
+                self.get_logger().info(
+                    f'[Benchmark] Done. Avg: {sum(times)/len(times):.2f}s  '
+                    f'Min: {min(times):.2f}s  Max: {max(times):.2f}s  Total: {sum(times):.2f}s'
+                )
 
             self.get_logger().info('Waiting for next client ...')
 

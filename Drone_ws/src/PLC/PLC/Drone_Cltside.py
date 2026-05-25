@@ -11,6 +11,7 @@ from std_srvs.srv import Trigger
 import zipfile
 import os
 import io
+import time
 
 
 class Drone_Cltside(Node):
@@ -46,18 +47,15 @@ class Drone_Cltside(Node):
 
     def __init__(self):
         """
-        
-        
-        
-        
+
         """
         super().__init__('drone_Client_side')
 
         # parameters
-        self.declare_parameter('host', '0.0.0.0')
+        self.declare_parameter('host', '10.42.0.1')
         self.declare_parameter('port', 12347)
         self.declare_parameter('bag_path', '/ros2_ws/bags/scan_20260517_115246') # default bag path, can be overridden by parameter
-
+        self.declare_parameter('benchmark', False) # if true, runs a benchmark of 100 send iterations on startup and logs the times
         # state
         self._sock: socket.socket | None = None
         self._connected = False
@@ -87,6 +85,8 @@ class Drone_Cltside(Node):
         # connect on startup
         self.stop_recording_client = self.create_client(Trigger,'/stop_recording')
         self._connect()
+        if self.get_parameter('benchmark').get_parameter_value().bool_value:
+            threading.Thread(target=self._run_benchmark, daemon=True).start()
 
     # connection helpers
 
@@ -291,6 +291,22 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+def _run_benchmark(self):
+    times, N = [], 100
+    self.get_logger().info(f'[Benchmark] Starting {N} send iterations...')
+    for i in range(N):
+        t0 = time.perf_counter()
+        success, msg = self._send_bag()
+        dt = time.perf_counter() - t0
+        times.append(dt)
+        self.get_logger().info(f'[Benchmark {i+1}/{N}] {"OK" if success else "FAIL"} — {dt:.2f}s')
+        if not success:
+            break
+    self.get_logger().info(
+        f'[Benchmark] Done. Avg: {sum(times)/len(times):.2f}s  '
+        f'Min: {min(times):.2f}s  Max: {max(times):.2f}s  Total: {sum(times):.2f}s'
+    )
 
 
 if __name__ == '__main__':
