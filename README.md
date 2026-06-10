@@ -1,5 +1,6 @@
 # P4-Project
 P4 Projekt robotteknologi
+ELE test flight: "https://www.youtube.com/watch?v=vJ7-lq0vzis"
 
 # Autonomous Robot Project (ROS2)
 
