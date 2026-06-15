@@ -6,12 +6,12 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
-try:
-    from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
-    OffboardControlMode, VehicleCommand
-    PX4_AVAILABLE = True
-except ImportError:
-    PX4_AVAILABLE = False
+# try:
+#     from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
+#     OffboardControlMode, VehicleCommand
+#     PX4_AVAILABLE = True
+# except ImportError:
+#     PX4_AVAILABLE = False
 
 
 # ros2 run <package> mission_planner_node --ros-args -p input_source:=local lookahead_dist:=2.0 waypoint_radius:=1.0 publish_rate:=50.0
@@ -31,20 +31,20 @@ except ImportError:
 #    (  0.0,  00.0, 10.0,   0.0)
 #]
 
-# DEFAULT_WAYPOINTS = [
-#     (  0.0,   0.0,  0.0,   0.0),
-#     (  0.0,   0.0, 10.0,   0.0),
-#     ( 20.0,  20.0, 10.0,   0.0)
-# ]
+DEFAULT_WAYPOINTS = [
+    (  0.0,   0.0,  0.0,   0.0),
+    (  0.0,   0.0, 10.0,   0.0),
+    ( 20.0,  20.0, 10.0,   0.0)
+]
 
 DEFAULT_WAYPOINTS = [
-    (  0.0,   0.0,  -0.0,   0.0),
-    (  0.0,   0.0,  -3.0,   0.0),
-    (  0.0,   0.0, -10.0,   0.0),
-    (  0.0,   0.0,  -5.0,   0.0),
-    (  0.0,   0.0,  -3.0,   0.0),
-    (  0.0,   0.0, -10.0,   0.0),
-    (  0.0,   0.0,  -3.0,   0.0)
+    (  0.0,   0.0,  0.0,   0.0),
+    (  0.0,   0.0,  3.0,   0.0),
+    (  0.0,   0.0, 10.0,   0.0),
+    (  0.0,   0.0,  5.0,   0.0),
+    (  0.0,   0.0,  3.0,   0.0),
+    (  0.0,   0.0, 10.0,   0.0),
+    (  0.0,   0.0,  3.0,   0.0)
 ]
 
 # DEFAULT_WAYPOINTS = [
@@ -65,14 +65,13 @@ DEFAULT_WAYPOINTS = [
 #     (  0.0,   0.0,  3.0,   0.0)
 # ]
 
-DEFAULT_WAYPOINTS = [
-    (  0.0,   0.0,  -2.0,   0.0),
-    ( 10.0,   0.0,  -2.0,   0.0),
-    ( 10.0,  10.0, -12.0,   0.0),
-    ( 0.0,   10.0, -12.0,   0.0),
-    ( 0.0,    0.0, -12.0,   0.0),
-    (  0.0,   0.0,  -2.0,  0.0)
-]
+# DEFAULT_WAYPOINTS = [
+#     (  0.0,   0.0,  -2.0,   0.0),
+#     ( 10.0,   0.0,  -5.0,   0.0),
+#     ( 10.0,   10.0,  -5.0,   0.0),
+#     ( 0.0,   10.0,  -5.0,   0.0),
+#     (  0.0,   0.0,  -5.0,  0.0)
+# ]
 
 
 
@@ -148,9 +147,9 @@ class PurePursuitMission(Node):
         elif source == 'vicon':
             self.create_subscription(
                 PoseStamped, 'vicon_pose', self.vicon_pos_callback, 10)
-        elif source == 'px4':
-            self.create_subscription(
-                VehicleOdometry, '/fmu/out/vehicle_odometry', self.px4_odometry_callback, px4_qos)
+        # elif source == 'px4':
+        #     self.create_subscription(
+        #         VehicleOdometry, '/fmu/out/vehicle_odometry', self.px4_odometry_callback, px4_qos)
 
         self.create_subscription( # Radio: append waypoint "x,y,z,yaw"
             String, 'uav/radio_in/target_waypoint', self.radio_waypoint_callback, 10)
@@ -161,6 +160,9 @@ class PurePursuitMission(Node):
         # Publisher
         self.target_pub = self.create_publisher(
             PoseStamped, 'uav/target_pos', 10)
+        
+        self.target_w_pub = self.create_publisher(
+            PoseStamped, 'uav/target_w_pos', 10)
 
         # Waypoint list
         self.waypoints= [np.array([x, y, z, yaw], dtype=float) for x, y, z, yaw in DEFAULT_WAYPOINTS]
@@ -277,18 +279,33 @@ class PurePursuitMission(Node):
                 ref_out = B.copy() + unit(C - B) * self.current_lookahead
                 _, lookahead_distance_along_seg_BC = project_point_to_segment(ref_out, B, C)
                 if d_BC <= d_AB:
+
+                    q_wxyz = yaw_to_quaternion_wxyz(0)
+                    msg = PoseStamped()
+                    msg.header.stamp    = self.get_clock().now().to_msg()
+                    msg.header.frame_id = 'map'
+                    msg.pose.position.x = float(C[0])
+                    msg.pose.position.y = float(C[1])
+                    msg.pose.position.z = float(C[2])
+                    msg.pose.orientation.w = float(q_wxyz[0])
+                    msg.pose.orientation.x = float(q_wxyz[1])
+                    msg.pose.orientation.y = float(q_wxyz[2])
+                    msg.pose.orientation.z = float(q_wxyz[3])
+                    self.target_w_pub.publish(msg)
+
                     if distance_along_seg_BC > lookahead_distance_along_seg_BC: # This case will have a jump in ref_out because it goes from lookahead from B to lookahead from closest_point.
                         self.t_transition_start = t # This will reset the lookahead to minimize the jump.
                         self.seg_idx += 1           # This if could be a part of (and block) the earlier if statement, but that would require the ""distance_along_seg_BC" subtracted from lookahead distance" to work in the following elif.
                         self.mode = "TRACK"
                         self.get_logger().info('Mode: TRACK')
-                    elif distance_along_seg_BC < lookahead_distance_along_seg_BC:
+                    else: #elif distance_along_seg_BC <= lookahead_distance_along_seg_BC:
                         # Lookahead distance in this case should have "distance_along_seg_BC" subtracted from it to avoid jump in ref_out 
                         # (only relevant if distance_along_seg_BC != 0, i.e. drone projection on BC != ~B in the instant it comes closer to BC), 
                         # but I don't know how.
                         self.seg_idx += 1
                         self.mode = "TRACK"
                         self.get_logger().info('Mode: TRACK')
+                    
 
             else:
                 ref_out = B.copy()

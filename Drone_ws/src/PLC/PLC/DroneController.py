@@ -9,12 +9,12 @@ from mavros_msgs.msg import AttitudeTarget
 from scipy.spatial.transform import Rotation as R # To convert between Euler degrees and quatanions.
 import numpy as np
 
-try:
-    from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
-    OffboardControlMode, VehicleCommand
-    PX4_AVAILABLE = True
-except ImportError:
-    PX4_AVAILABLE = False
+# try:
+#     from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
+#     OffboardControlMode, VehicleCommand
+#     PX4_AVAILABLE = True
+# except ImportError:
+#     PX4_AVAILABLE = False
 # ══════════════════════════════════════════════════════════════════════════════
 # Maths helpers
 # ══════════════════════════════════════════════════════════════════════════════
@@ -52,14 +52,14 @@ class PID:
         self._deriv_filt = 0.0
         self._first_run  = True
 
-    def update(self, setpoint, measurement):
+    def update(self, setpoint, measurement, dist_to_waypoint):
         error = setpoint - measurement
 
         # Proportional
         p = self.kp * error
 
         # Integral + clamp anti-windup
-        if abs(error) < 3.0:
+        if dist_to_waypoint < 3.0:
             self._integral += error * self.dt
         else:
             # optional: decay instead of freeze
@@ -130,9 +130,9 @@ class DroneController(Node):
 
         # Controllers
         #self.xy_controller = XYController(hover_thrust=0.73)
-        self.x_controller = PID(kp=0.0262, ki=0.0, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
-        self.y_controller = PID(kp=0.0262, ki=0.0, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
-        self.z_controller  = PID(kp=0.1, ki=0.0, kd=0.2, dt=self.dt, thr_min=0.3, thr_max=1.0,hover_thrust=0.76, integral_limit = 6.0)
+        self.x_controller = PID(kp=0.0262, ki=0.00075, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
+        self.y_controller = PID(kp=0.0262, ki=0.00075, kd=0.1, dt=self.dt, output_limit=np.radians(10.0))
+        self.z_controller  = PID(kp=0.1, ki=0.05, kd=0.2, dt=self.dt, thr_min=0.3, thr_max=1.0,hover_thrust=0.76, integral_limit = 4.0)
 
 
         # self.x_controller = PID(kp=0.00302, ki=0.000020, kd=0.098224, dt=self.dt, output_limit=np.radians(10.0))
@@ -153,6 +153,12 @@ class DroneController(Node):
         self.target_y = 0.0
         self.target_z = 0.0
         self.target_P = np.array([self.target_x, self.target_y, self.target_z])
+
+        # Target waypoint position
+        self.target_w_x = 0.0
+        self.target_w_y = 0.0
+        self.target_w_z = 0.0
+        self.target_w_P = np.array([self.target_w_x, self.target_w_y, self.target_w_z])
 
         ############## EDIT THIS ONE ######################
         self.current_vel = 0.0
@@ -188,29 +194,32 @@ class DroneController(Node):
 
             self.set_mode_client = self.create_client(              # To set mode...
                 SetMode, '/mavros/set_mode')
-        elif self.source == 'px4':
-            if not PX4_AVAILABLE:
-                self.get_logger().error('PX4 messages not available. Please install px4_msgs package.')
-                raise RuntimeError('PX4 messages not available')
-            self.get_logger().info('Using PX4 topics and services')
+        # elif self.source == 'px4':
+        #     if not PX4_AVAILABLE:
+        #         self.get_logger().error('PX4 messages not available. Please install px4_msgs package.')
+        #         raise RuntimeError('PX4 messages not available')
+        #     self.get_logger().info('Using PX4 topics and services')
 
-            self.create_subscription(
-                VehicleOdometry, '/fmu/out/vehicle_odometry', self.px4_odometry_callback, px4_qos)
+        #     self.create_subscription(
+        #         VehicleOdometry, '/fmu/out/vehicle_odometry', self.px4_odometry_callback, px4_qos)
             
-            self.px4_att_pub = self.create_publisher(
-                VehicleAttitudeSetpoint, '/fmu/in/vehicle_attitude_setpoint_v1', px4_qos)
+        #     self.px4_att_pub = self.create_publisher(
+        #         VehicleAttitudeSetpoint, '/fmu/in/vehicle_attitude_setpoint_v1', px4_qos)
             
-            self.px4_offboard_pub = self.create_publisher(
-                OffboardControlMode, '/fmu/in/offboard_control_mode', px4_qos
-            )
-            self.px4_cmd_pub = self.create_publisher(
-                VehicleCommand, '/fmu/in/vehicle_command', px4_qos
-            )
+        #     self.px4_offboard_pub = self.create_publisher(
+        #         OffboardControlMode, '/fmu/in/offboard_control_mode', px4_qos
+        #     )
+        #     self.px4_cmd_pub = self.create_publisher(
+        #         VehicleCommand, '/fmu/in/vehicle_command', px4_qos
+        #     )
         
         # Shared subscribers
 
         self.target_pos_sub = self.create_subscription(         # Target position topic.
             PoseStamped, 'uav/target_pos', self.target_pos_callback, 10)
+        
+        self.target_waypoint_sub = self.create_subscription(         # Target position topic.
+            PoseStamped, 'uav/target_w_pos', self.target_waypoint_callback, 10)
         
         self.create_subscription(String, 'uav/radio_in/mission_command', self.mission_command_callback, 10)
 
@@ -245,6 +254,12 @@ class DroneController(Node):
         self.target_y = msg.pose.position.y
         self.target_z = msg.pose.position.z
         self.target_P = np.array([self.target_x, self.target_y, self.target_z])
+
+    def target_waypoint_callback(self, msg):
+        self.target_w_x = msg.pose.position.x
+        self.target_w_y = msg.pose.position.y
+        self.target_w_z = msg.pose.position.z
+        self.target_w_P = np.array([self.target_w_x, self.target_w_y, self.target_w_z])
 
     def mission_command_callback(self, msg):
         return
@@ -288,9 +303,10 @@ class DroneController(Node):
         if not self.current_state.armed: # Check if drone is ARMED and in correct flight mode # not self.current_state.guided or 
             return
         
-        self.phi_x = self.x_controller.update(self.target_x, self.current_x)
-        self.phi_y = self.y_controller.update(self.target_y, self.current_y)
-        self.thr_z = self.z_controller.update(-self.target_z, -self.current_z)
+        dist_to_waypoint = np.linalg.norm(self.target_w_x - self.target_x)
+        self.phi_x = self.x_controller.update(self.target_x, self.current_x, dist_to_waypoint)
+        self.phi_y = self.y_controller.update(self.target_y, self.current_y, dist_to_waypoint)
+        self.thr_z = self.z_controller.update(-self.target_z, -self.current_z, 0)
         
         q_wxyz = self.convert_euler_to_quaternion()
 
@@ -312,73 +328,73 @@ class DroneController(Node):
 
         self.att_thr_pub.publish(msg)
     
-    def _control_loop_px4(self):
-               # Must stream offboard mode every tick or PX4 disengages
-        self._publish_offboard_mode()
+    # def _control_loop_px4(self):
+    #            # Must stream offboard mode every tick or PX4 disengages
+    #     self._publish_offboard_mode()
 
-        # Startup sequence — arm and switch to offboard after 10 ticks
-        if self.counter == 100:
-            self._px4_switch_offboard()
-            self._px4_arm()
-        self.counter += 1
+    #     # Startup sequence — arm and switch to offboard after 10 ticks
+    #     if self.counter == 100:
+    #         self._px4_switch_offboard()
+    #         self._px4_arm()
+    #     self.counter += 1
 
-        if self.counter < 100:
-            return
+    #     if self.counter < 100:
+    #         return
 
-        self.phi_x = self.x_controller.update(self.target_x, self.current_x)
-        self.phi_y = self.y_controller.update(self.target_y, self.current_y)
-        self.thr_z = self.z_controller.update(self.target_z, self.current_z)
+    #     self.phi_x = self.x_controller.update(self.target_x, self.current_x)
+    #     self.phi_y = self.y_controller.update(self.target_y, self.current_y)
+    #     self.thr_z = self.z_controller.update(self.target_z, self.current_z)
 
-        q_wxyz = self.convert_euler_to_quaternion_px4()
+    #     q_wxyz = self.convert_euler_to_quaternion_px4()
 
-        msg = VehicleAttitudeSetpoint()
-        msg.q_d[0] = float(q_wxyz[0])
-        msg.q_d[1] = float(q_wxyz[1])
-        msg.q_d[2] = float(q_wxyz[2])
-        msg.q_d[3] = float(q_wxyz[3])
-        msg.thrust_body[0] = 0.0
-        msg.thrust_body[1] = 0.0
-        msg.thrust_body[2] = float(self.thr_z)   # already negative (NED upward)
-        msg.timestamp = self.get_clock().now().nanoseconds // 1000
-        self.px4_att_pub.publish(msg)
+    #     msg = VehicleAttitudeSetpoint()
+    #     msg.q_d[0] = float(q_wxyz[0])
+    #     msg.q_d[1] = float(q_wxyz[1])
+    #     msg.q_d[2] = float(q_wxyz[2])
+    #     msg.q_d[3] = float(q_wxyz[3])
+    #     msg.thrust_body[0] = 0.0
+    #     msg.thrust_body[1] = 0.0
+    #     msg.thrust_body[2] = float(self.thr_z)   # already negative (NED upward)
+    #     msg.timestamp = self.get_clock().now().nanoseconds // 1000
+    #     self.px4_att_pub.publish(msg)
 
-    # Px4 Helpers
-    def _publish_offboard_mode(self):
-        msg = OffboardControlMode()
-        msg.attitude     = True
-        msg.body_rate    = False
-        msg.position     = False
-        msg.velocity     = False
-        msg.acceleration = False
-        msg.timestamp    = self.get_clock().now().nanoseconds // 1000
-        self.px4_offboard_pub.publish(msg)
+    # # Px4 Helpers
+    # def _publish_offboard_mode(self):
+    #     msg = OffboardControlMode()
+    #     msg.attitude     = True
+    #     msg.body_rate    = False
+    #     msg.position     = False
+    #     msg.velocity     = False
+    #     msg.acceleration = False
+    #     msg.timestamp    = self.get_clock().now().nanoseconds // 1000
+    #     self.px4_offboard_pub.publish(msg)
 
-    def _px4_arm(self):
-        msg = VehicleCommand()
-        msg.command          = VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM
-        msg.param1           = 1.0
-        msg.target_system    = 1
-        msg.target_component = 1
-        msg.source_system    = 1
-        msg.source_component = 1
-        msg.from_external    = True
-        msg.timestamp        = self.get_clock().now().nanoseconds // 1000
-        self.px4_cmd_pub.publish(msg)
-        self.get_logger().info('PX4 arm command sent')
+    # def _px4_arm(self):
+    #     msg = VehicleCommand()
+    #     msg.command          = VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM
+    #     msg.param1           = 1.0
+    #     msg.target_system    = 1
+    #     msg.target_component = 1
+    #     msg.source_system    = 1
+    #     msg.source_component = 1
+    #     msg.from_external    = True
+    #     msg.timestamp        = self.get_clock().now().nanoseconds // 1000
+    #     self.px4_cmd_pub.publish(msg)
+    #     self.get_logger().info('PX4 arm command sent')
 
-    def _px4_switch_offboard(self):
-        msg = VehicleCommand()
-        msg.command          = VehicleCommand.VEHICLE_CMD_DO_SET_MODE
-        msg.param1           = 1.0
-        msg.param2           = 6.0
-        msg.target_system    = 1
-        msg.target_component = 1
-        msg.source_system    = 1
-        msg.source_component = 1
-        msg.from_external    = True
-        msg.timestamp        = self.get_clock().now().nanoseconds // 1000
-        self.px4_cmd_pub.publish(msg)
-        self.get_logger().info('PX4 offboard mode command sent')
+    # def _px4_switch_offboard(self):
+        # msg = VehicleCommand()
+        # msg.command          = VehicleCommand.VEHICLE_CMD_DO_SET_MODE
+        # msg.param1           = 1.0
+        # msg.param2           = 6.0
+        # msg.target_system    = 1
+        # msg.target_component = 1
+        # msg.source_system    = 1
+        # msg.source_component = 1
+        # msg.from_external    = True
+        # msg.timestamp        = self.get_clock().now().nanoseconds // 1000
+        # self.px4_cmd_pub.publish(msg)
+        # self.get_logger().info('PX4 offboard mode command sent')
 
 
 
