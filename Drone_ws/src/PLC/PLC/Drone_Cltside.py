@@ -281,6 +281,23 @@ class Drone_Cltside(Node):
         else:
             self.get_logger().error(f'Failed to trigger stop recording: {result.message}')
 
+    def _run_benchmark(self):
+        times, N = [], 100
+        self.get_logger().info(f'[Benchmark] Starting {N} send iterations...')
+        for i in range(N):
+            t0 = time.perf_counter()
+            success, msg = self._send_bag()
+            dt = time.perf_counter() - t0
+            times.append(dt)
+            self.get_logger().info(f'[Benchmark {i+1}/{N}] {"OK" if success else "FAIL"} — {dt:.2f}s')
+            if not success:
+                break
+        self.get_logger().info(
+            f'[Benchmark] Done. Avg: {sum(times)/len(times):.2f}s  '
+            f'Min: {min(times):.2f}s  Max: {max(times):.2f}s  Total: {sum(times):.2f}s'
+        )
+
+
 def main(args=None):
     rclpy.init(args=args)
     node = Drone_Cltside()
@@ -292,21 +309,6 @@ def main(args=None):
         node.destroy_node()
         rclpy.shutdown()
 
-def _run_benchmark(self):
-    times, N = [], 100
-    self.get_logger().info(f'[Benchmark] Starting {N} send iterations...')
-    for i in range(N):
-        t0 = time.perf_counter()
-        success, msg = self._send_bag()
-        dt = time.perf_counter() - t0
-        times.append(dt)
-        self.get_logger().info(f'[Benchmark {i+1}/{N}] {"OK" if success else "FAIL"} — {dt:.2f}s')
-        if not success:
-            break
-    self.get_logger().info(
-        f'[Benchmark] Done. Avg: {sum(times)/len(times):.2f}s  '
-        f'Min: {min(times):.2f}s  Max: {max(times):.2f}s  Total: {sum(times):.2f}s'
-    )
 
 
 if __name__ == '__main__':

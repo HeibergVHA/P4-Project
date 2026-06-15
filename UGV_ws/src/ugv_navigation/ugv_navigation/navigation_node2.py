@@ -156,8 +156,8 @@ class NavigationNode(Node):
         self.g_score   = {}
         self.came_from = {}
 
-        self.start = (590, 69)
-        self.goal  = (81, 689)
+        self.start = (19, 69)
+        self.goal  = (514, 683)
 
         qos = QoSProfile(depth=1)
         qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -352,6 +352,7 @@ class NavigationNode(Node):
         self.get_logger().info('Navigation requested.')
         self._reset_astar()
         path = self.a_star()
+        self.get_logger().info(str(path))
         if path:
             response.success = True
             response.message = f'Path found: {len(path)} waypoints.'
