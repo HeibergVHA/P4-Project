@@ -1,11 +1,7 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.serialization import serialize_message
-from sensor_msgs.msg import Imu, NavSatFix
-from livox_interfaces.msg import CustomMsg
 from std_srvs.srv import Trigger
 import datetime
-import rosbag2_py
 import subprocess
 import time
 import os 
@@ -14,10 +10,12 @@ import signal
 class LivoxBagRecorder(Node):
     def __init__(self):
         super().__init__('livox_bag_recorder')
-        self.writer = None
+        self._pending_send = False
+        self.bag_process = None
         self.recording = False
         self.bag_name = None
         self.livox_process = None
+
 
         self.start_srv = self.create_service(
             Trigger,
@@ -31,27 +29,6 @@ class LivoxBagRecorder(Node):
             self.stop_callback
         )
 
-        self.lidar_sub = self.create_subscription(
-            CustomMsg,
-            '/livox/lidar',
-            self.lidar_callback,
-            10
-        )
-
-        self.imu_sub = self.create_subscription(
-            Imu,
-            '/livox/imu',
-            self.imu_callback,
-            10
-        )
-
-        self.gps_sub = self.create_subscription(
-            NavSatFix,
-            '/mavros/global_position/global',
-            self.gps_callback,
-            10
-        )
-        self._pending_send = False
         self.create_timer(1.0, self._check_send)
 
         self.send_client = self.create_client(Trigger, '/send')
@@ -83,31 +60,14 @@ class LivoxBagRecorder(Node):
 
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         self.bag_name = f'/ros2_ws/bags/scan_{timestamp}'
-        self.writer = rosbag2_py.SequentialWriter()
-        storage_options = rosbag2_py.StorageOptions(
-            uri=self.bag_name,
-            storage_id='sqlite3')
-        converter_options = rosbag2_py.ConverterOptions('', '')
-        self.writer.open(storage_options, converter_options)
-
-        # Register recording topics
-        lidar_info = rosbag2_py.TopicMetadata(
-            name='/livox/lidar',
-            type='livox_interfaces/msg/CustomMsg',
-            serialization_format='cdr')
-        self.writer.create_topic(lidar_info)
-    
-        imu_topic = rosbag2_py.TopicMetadata(
-            name='/livox/imu',
-            type='sensor_msgs/msg/Imu',
-            serialization_format='cdr')
-        self.writer.create_topic(imu_topic)
-
-        gps_topic = rosbag2_py.TopicMetadata(
-            name='/mavros/global_position/global',
-            type='sensor_msgs/msg/NavSatFix',
-            serialization_format='cdr')
-        self.writer.create_topic(gps_topic)
+        
+        self.bag_process = subprocess.Popen(
+            ['ros2', 'bag', 'record',
+             '-o', self.bag_name,
+             '/livox/lidar',
+             '/livox/imu',
+             '/mavros/global_position/global']
+        )
 
         self.recording = True
         self.get_logger().info(f'Recording started: {self.bag_name}')
@@ -120,36 +80,22 @@ class LivoxBagRecorder(Node):
             response.success = False
             response.message = 'Not recording'
             return response
-        self.writer = None
+        
+        if self.bag_process:
+            self.bag_process.terminate()
+            self.bag_process.wait()
+            self.bag_process = None
+
         self.recording = False
         self.get_logger().info(f'Recording stopped: {self.bag_name}')
-        self._pending_send = True
+
         self.stop_livox_driver()
+        self._pending_send = True
+
         response.success = True
         response.message = f'{self.bag_name}'
         return response
     
-    def lidar_callback(self, msg):
-        if self.recording and self.writer:
-            self.writer.write(
-                '/livox/lidar',
-                serialize_message(msg),
-                self.get_clock().now().nanoseconds)
-
-    def imu_callback(self, msg):
-        if self.recording and self.writer:
-            self.writer.write(
-                '/livox/imu',
-                serialize_message(msg),
-                self.get_clock().now().nanoseconds)
-    
-    def gps_callback(self, msg):
-        if self.recording and self.writer:
-            self.writer.write(
-                '/mavros/global_position/global',
-                serialize_message(msg),
-                self.get_clock().now().nanoseconds
-            )
     def trigger_send(self):
         request = Trigger.Request()
         future = self.send_client.call_async(request)
