@@ -303,7 +303,7 @@ class DroneController(Node):
         if not self.current_state.armed: # Check if drone is ARMED and in correct flight mode # not self.current_state.guided or 
             return
         
-        dist_to_waypoint = np.linalg.norm(self.target_w_x - self.target_x)
+        dist_to_waypoint = np.linalg.norm(self.target_w_P - self.current_P)
         self.phi_x = self.x_controller.update(self.target_x, self.current_x, dist_to_waypoint)
         self.phi_y = self.y_controller.update(self.target_y, self.current_y, dist_to_waypoint)
         self.thr_z = self.z_controller.update(-self.target_z, -self.current_z, 0)
