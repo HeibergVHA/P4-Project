@@ -33,19 +33,24 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPo
 
 DEFAULT_WAYPOINTS = [
     (  0.0,   0.0,  0.0,   0.0),
-    (  0.0,   0.0, 10.0,   0.0),
-    ( 20.0,  20.0, 10.0,   0.0)
+    (  0.0,   0.0, 3.0,   0.0)
 ]
 
-DEFAULT_WAYPOINTS = [
-    (  0.0,   0.0,  0.0,   0.0),
-    (  0.0,   0.0,  3.0,   0.0),
-    (  0.0,   0.0, 10.0,   0.0),
-    (  0.0,   0.0,  5.0,   0.0),
-    (  0.0,   0.0,  3.0,   0.0),
-    (  0.0,   0.0, 10.0,   0.0),
-    (  0.0,   0.0,  3.0,   0.0)
-]
+# DEFAULT_WAYPOINTS = [
+#     (  0.0,   0.0,  0.0,   0.0),
+#     (  0.0,   0.0, 10.0,   0.0),
+#     ( 20.0,  20.0, 10.0,   0.0)
+# ]
+
+# DEFAULT_WAYPOINTS = [
+#     (  0.0,   0.0,  0.0,   0.0),
+#     (  0.0,   0.0,  3.0,   0.0),
+#     (  0.0,   0.0, 10.0,   0.0),
+#     (  0.0,   0.0,  5.0,   0.0),
+#     (  0.0,   0.0,  3.0,   0.0),
+#     (  0.0,   0.0, 10.0,   0.0),
+#     (  0.0,   0.0,  3.0,   0.0)
+# ]
 
 # DEFAULT_WAYPOINTS = [
 #     (  0.0,   0.0,  0.0,   0.0),
@@ -120,7 +125,7 @@ class PurePursuitMission(Node):
         publish_rate            = float(self.get_parameter('publish_rate').value)
         self.L_current          = 0.0
         self.L_ramp_rate        = 1.0
-        self.hold_pos           = np.zeros(3)
+        self.hold_pos           = DEFAULT_WAYPOINTS[1][0:3]
         self.hold_yaw           = 0.0
         self.mode               = "TRACK"
         self.current_lookahead  = 0.0
@@ -170,11 +175,12 @@ class PurePursuitMission(Node):
 
         # State
         self.pos = np.zeros(3)  # Current position [x, y, z]
+        self.origin = np.zeros(3)  # origin position [x, y, z]
 
         if source == 'px4':
             self.mission_active = True
         else:
-            self.mission_active = True
+            self.mission_active = False
 
         # Loop timer
         dt = 1.0 / publish_rate
@@ -214,6 +220,8 @@ class PurePursuitMission(Node):
             self.mission_active = True
             self.seg_idx = 0
             self.get_logger().info('Mission STARTED')
+        elif cmd == 'origin':
+            self.origin = self.pos
         elif cmd == 'pause':
             self.mission_active = False
             self.get_logger().info('Mission PAUSED — holding current reference')
@@ -243,7 +251,7 @@ class PurePursuitMission(Node):
         if has_next:
             C = self.waypoints[self.seg_idx + 2][:3]
 
-        p = self.pos
+        p = self.pos - self.origin
 
         dist_to_B = np.linalg.norm(p - B)
 
@@ -330,7 +338,7 @@ class PurePursuitMission(Node):
         A = self.waypoints[self.seg_idx][:3]
         B = self.waypoints[self.seg_idx + 1][:3]
 
-        p = self.pos
+        p = self.pos - self.origin
 
         # Project onto segment AB
         closest_point, distance_along_seg = project_point_to_segment(p, A, B)
@@ -361,7 +369,7 @@ class PurePursuitMission(Node):
             wp = self.waypoints[-1]
             return wp[:3], wp[3]
 
-        p = self.pos
+        p = self.pos - self.origin
 
         # Current segment
         A = self.waypoints[self.seg_idx][:3]
