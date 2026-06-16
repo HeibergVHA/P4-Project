@@ -222,6 +222,8 @@ class PurePursuitMission(Node):
             self.get_logger().info('Mission STARTED')
         elif cmd == 'origin':
             self.origin = self.pos
+        elif cmd == 'reset':
+            self.waypoints = [np.array([x, y, z, yaw], dtype=float) for x, y, z, yaw in DEFAULT_WAYPOINTS]
         elif cmd == 'pause':
             self.mission_active = False
             self.get_logger().info('Mission PAUSED — holding current reference')
