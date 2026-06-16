@@ -37,7 +37,7 @@ class RadioNode(Node):
 
     # callbacks
     def position_callback(self, msg):
-        if self.lastSend < time.time() + 1:
+        if self.lastSend < time.time() - 1:
             packet = {
                 'type': 'drone_position',
                 'x': msg.pose.position.x,
