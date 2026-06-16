@@ -35,6 +35,7 @@ setup(
         'livox_bag_reader = UGV_SvrSide.LivoxBagReader:main',
         'radio_node = UGV_SvrSide.radio_node:main',
         'manual_commands_node = UGV_SvrSide.manual_commands_node:main',
+        'ugv_controller_node = UGV_SvrSide.ugv_controller_node:main',
         ],
     },
 )
