@@ -132,6 +132,8 @@ class PurePursuitMission(Node):
         self.current_lookahead  = 0.0
         self.t_transition_start = 0.0
         self.lidar_collector_started = False
+        self.start_lidar = False
+        self.stop_lidar = False
 
         # QoS 
         px4_qos = QoSProfile(
@@ -241,6 +243,10 @@ class PurePursuitMission(Node):
             self.mission_active = False
             self.seg_idx = 0
             self.get_logger().warn('Mission ABORTED')
+        elif cmd == 'start_lidar':
+            self.start_lidar = True
+        elif cmd == 'stop_lidar':
+            self.stop_lidar = True
         else:
             self.get_logger().warn(f'Unknown command: "{cmd}". Commands: "start", "origin", "reset", "pause", "resume", "abort".')
 
@@ -479,13 +485,15 @@ class PurePursuitMission(Node):
 
     def check_lidar_state_change_need(self):
         # Check if lidar collector need to start or stop.
-        if self.seg_idx == 2 and not self.lidar_collector_started:
+        if (self.seg_idx == 2 and not self.lidar_collector_started) or self.start_lidar:
+            self.start_lidar = False
             request = Trigger.Request()
             future = self.lidar_start.call_async(request)
             future.add_done_callback(self.lidar_start_response)
         
         has_next = self.seg_idx + 2 < len(self.waypoints)
-        if not has_next and self.lidar_collector_started:
+        if (not has_next and self.lidar_collector_started) or self.stop_lidar:
+            self.stop_lidar = False
             future = self.lidar_stop.call_async(Trigger.Request())
             future.add_done_callback(self.lidar_stop_response)
         
@@ -495,7 +503,7 @@ class PurePursuitMission(Node):
             self.publish(self.hold_pos, self.hold_yaw)
             return
 
-        if self.last_seg_idx != self.seg_idx:
+        if self.last_seg_idx != self.seg_idx or self.stop_lidar or self.start_lidar:
             self.check_lidar_state_change_need()
             self.last_seg_idx = self.seg_idx
 
