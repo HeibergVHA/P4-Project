@@ -9,7 +9,7 @@ from rclpy.serialization import deserialize_message
 import os
 import subprocess
 import time
-
+import signal
 class LivoxBagReader(Node):
     def __init__(self):
         super().__init__('livox_bag_reader')
@@ -97,12 +97,28 @@ class LivoxBagReader(Node):
     
     def _shutdown_processes(self):
         if self.fastlio_process:
-            self.fastlio_process.terminate()
-            self.fastlio_process = None
+            try:
+                os.kill(self.fastlio_process.pid, signal.SIGINT)
+                self.fastlio_process.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                self.get_logger().warn('FAST-LIO2 did not exit cleanly, force killing')
+                self.fastlio_process.kill()
+            except Exception as e:
+                self.get_logger().error(f'Error shutting down FAST-LIO2: {e}')
+            finally:
+                self.fastlio_process = None
             self.get_logger().info('Terminated FAST-LIO process')
+
         if self.bag_process:
-            self.bag_process.terminate()
-            self.bag_process = None
+            try:
+                self.bag_process.terminate()
+                self.bag_process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                self.bag_process.kill()
+            except Exception as e:
+                self.get_logger().error(f'Error shutting down bag play: {e}')
+            finally:
+                self.bag_process = None
             self.get_logger().info('Terminated bag play process')
 
     

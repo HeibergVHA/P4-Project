@@ -249,12 +249,12 @@ class LidarTemplateMatcherNode(Node):
 
         pts = np.asarray(pcd.points, dtype=np.float64)
         pts, self.floor_T = self._align_floor(pts)
-        pts = self._unwrap_curved_surface(
-                pts,
-                tall_object_z_threshold=0.2,   # metres — tune to just below your box height
-                poly_degree=3,
-            )
-        pcd.points = o3d.utility.Vector3dVector(pts)
+        # pts = self._unwrap_curved_surface(
+        #         pts,
+        #         tall_object_z_threshold=0.2,   # metres — tune to just below your box height
+        #         poly_degree=3,
+        #     )
+        # pcd.points = o3d.utility.Vector3dVector(pts)
 
         self.get_logger().info(
             f'Scene loaded: {len(pts):,} pts  '

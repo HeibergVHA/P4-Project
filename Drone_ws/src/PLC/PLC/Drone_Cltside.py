@@ -51,8 +51,8 @@ class Drone_Cltside(Node):
         """
         super().__init__('drone_Client_side')
 
-        # parameters
-        self.declare_parameter('host', '10.42.0.1')
+        # parameters 10.42.0.1
+        self.declare_parameter('host', '127.0.0.1')
         self.declare_parameter('port', 12347)
         self.declare_parameter('bag_path', '/ros2_ws/bags/scan_20260517_115246') # default bag path, can be overridden by parameter
         self.declare_parameter('benchmark', False) # if true, runs a benchmark of 100 send iterations on startup and logs the times
@@ -253,26 +253,24 @@ class Drone_Cltside(Node):
         super().destroy_node()
 
     def trigger_start_recording(self):
-        # request = Trigger.Request()
-        # future = self.start_recording_client.call_async(request)
-        # future.add_done_callback(self.start_recording_response_cb)
-        return
+        request = Trigger.Request()
+        future = self.start_recording_client.call_async(request)
+        future.add_done_callback(self.start_recording_response_cb)
 
     def start_recording_response_cb(self, future):
         result = future.result()
         if result.success:
             self.get_logger().info(f'Start recording triggered successfully: {result.message}')
             self.bag_name = result.message
-            self.recording_timer = self.create_timer(60.0, self.trigger_stop_recording)
+            self.recording_timer = self.create_timer(15.0, self.trigger_stop_recording)
         else:
             self.get_logger().error(f'Failed to trigger start recording: {result.message}')
 
     def trigger_stop_recording(self):
-        # self.recording_timer.cancel()
-        # request = Trigger.Request()
-        # future = self.stop_recording_client.call_async(request)
-        # future.add_done_callback(self.stop_recording_response_cb)
-        return
+        self.recording_timer.cancel()
+        request = Trigger.Request()
+        future = self.stop_recording_client.call_async(request)
+        future.add_done_callback(self.stop_recording_response_cb)
 
     def stop_recording_response_cb(self, future):
         result = future.result()
