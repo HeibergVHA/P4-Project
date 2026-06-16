@@ -36,7 +36,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 from std_srvs.srv import Trigger
-
+from control_interfaces.srv import RunTemplateMatching, SetMission
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 from nav_msgs.msg import OccupancyGrid
 
@@ -53,8 +53,6 @@ class LidarTemplateMatcherNode(Node):
         except PackageNotFoundError:
             pkg = os.path.join(os.getcwd(), 'src', 'Cost_Map')
 
-        self.declare_parameter('scene_file',
-            os.path.join(pkg, 'resource', 'scene_cloud3.pcd'))
         self.declare_parameter('template_file',
             os.path.join(pkg, 'resource', 'rc_car_template.pcd'))
 
@@ -74,7 +72,7 @@ class LidarTemplateMatcherNode(Node):
         # Larger values are safer but slow ICP down.
         self.declare_parameter('icp_crop_margin', 0.2)
 
-        self.scene_file    = self.get_parameter('scene_file').value
+        self.scene_file = 'deps/FAST_LIO_ROS2/PCD/scans.pcd'
         self.template_file = self.get_parameter('template_file').value
         self.voxel_size    = self.get_parameter('voxel_size').value
         self.z_min         = self.get_parameter('z_min').value
@@ -105,14 +103,33 @@ class LidarTemplateMatcherNode(Node):
 
         # - Service 
 
-        self.srv = self.create_service(Trigger, 'run_template_matching',
-                                       self._match_callback)
-
+        self.srv = self.create_service(RunTemplateMatching, 'run_template_matching',
+                                    self._match_callback)
+        
+        self._mission_client = self.create_client(SetMission, '/set_mission')
         self.get_logger().info(
             'Ready — call:  ros2 service call /run_template_matching std_srvs/srv/Trigger \'{}\''
         )
 
     # Service callback - top-level orchestration
+
+    def _trigger_mission_control(self, T: np.ndarray, costmap_path: str):
+        if not self._mission_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().error('Mission control service not available')
+            return
+        request = SetMission.Request()
+        request.costmap_path = costmap_path
+        request.start_x = float(T[0, 3])
+        request.start_y = float(T[1, 3])
+        future = self._mission_client.call_async(request)
+        future.add_done_callback(self._mission_response_cb)
+
+    def _mission_response_cb(self, future):
+        result = future.result()
+        if result.success:
+            self.get_logger().info(f'Mission control notified: {result.message}')
+        else:
+            self.get_logger().error(f'Mission control failed: {result.message}')
 
     def _costmap_callback(self, msg: OccupancyGrid):
         self._latest_costmap = msg
@@ -124,6 +141,8 @@ class LidarTemplateMatcherNode(Node):
         )
 
     def _match_callback(self, request, response):
+        self._current_costmap_path = request.costmap_path
+        self._latest_costmap_npy_info = None
         try:
             # 1. Load scene & rotate floor to XY plane
             scene = self._load_scene()
@@ -203,6 +222,9 @@ class LidarTemplateMatcherNode(Node):
 
             # 9. Publish pose
             self._publish_pose(final_T)
+
+            # Trigger mission control
+            self._trigger_mission_control(final_T, request.costmap_path)
 
             response.success = True
             response.message = (
@@ -355,7 +377,7 @@ class LidarTemplateMatcherNode(Node):
                             threshold: int = 253) -> o3d.geometry.PointCloud:
         """Keep only points whose (x, y) falls in a costmap cell >= threshold."""
         if self._latest_costmap_npy_info is None:
-            data = self._wait_for_latest_costmap_npy()
+            data = np.load(self._current_costmap_path)
             self._latest_costmap_npy_info = self._prepare_costmap_from_npy(data)
 
         if self._latest_costmap_npy_info is None:

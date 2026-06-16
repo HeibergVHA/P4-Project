@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import socket
 import struct
 import threading
@@ -258,10 +257,9 @@ class UGV_SvrSide(Node):
         super().destroy_node()
 
     def trigger_start_reading(self):
-        # request = Trigger.Request()
-        # future = self.start_reading_client.call_async(request)
-        # future.add_done_callback(self.start_reading_response_cb)
-        return
+        request = Trigger.Request()
+        future = self.start_reading_client.call_async(request)
+        future.add_done_callback(self.start_reading_response_cb)
         
     
     def start_reading_response_cb(self, future):

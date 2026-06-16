@@ -194,8 +194,6 @@ class UGVController(Node):
                     steer_byte = bytes([int(np.clip(self.last_steer_deg, 0, 180))])
                     self.ser.write(steer_byte)
 
-                if self.source == 'ros':
-                    continue
 
                 # Read
                 raw = self.ser.readline().decode(errors='ignore').strip()

@@ -1,0 +1,6 @@
+string costmap_path
+float32 start_x
+float32 start_y
+---
+bool success
+string message

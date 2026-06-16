@@ -37,7 +37,7 @@ from std_srvs.srv import Trigger
 from tf2_ros import StaticTransformBroadcaster
 
 from threshold_interfaces.srv import SetThresholds
-
+from control_interfaces.srv import RunTemplateMatching
 
 # - Cost values used throughout the node
 COST_FREE     = 10   # Flat, traversable terrain
@@ -67,6 +67,8 @@ class LidarCostmapGenerator(Node):
         self._read_parameters()
         self._create_publishers()
         self._create_services()
+        self._latest_npy_path = None
+        self._template_client = self.create_client(RunTemplateMatching, '/run_template_matching')
 
         # Broadcast a static TF so RViz2 can resolve the 'map' frame.
         self._tf_broadcaster = StaticTransformBroadcaster(self)
@@ -80,13 +82,15 @@ class LidarCostmapGenerator(Node):
             "threshold_interfaces/srv/SetThresholds '{}'"
         )
 
+
+
         # In __init__, after your existing publishers:
         self._latest_costmap: OccupancyGrid | None = None
 
 
     def _declare_parameters(self):
         """Register all node parameters with their default values."""
-        self.declare_parameter('pcd_file_path',             'src/Cost_Map/resource/scene_cloud8.pcd')
+        self.declare_parameter('pcd_file_path',             'deps/FAST_LIO_ROS2/PCD/scans.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
         self.declare_parameter('inflation_radius_meters',   0.30) # The buffer zone between an obstacle or caution cell.
@@ -187,6 +191,8 @@ class LidarCostmapGenerator(Node):
 
         # Pass the grid directly — no subscription needed
         #points = self._filter_by_costmap_grid(points, master, min_bound, threshold=99)
+
+        self._trigger_template_matching()
 
         response.success = True
         response.message = f"Costmaps generated: {width_cells}x{height_cells} cells"
@@ -598,11 +604,27 @@ class LidarCostmapGenerator(Node):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filepath  = save_dir / f"costmap_{timestamp}.npy"
             np.save(filepath, coords_and_costs)
+            self._latest_npy_path = str(filepath)
             self.get_logger().info(f"Saved {len(coords_and_costs)} cells → {filepath}")
 
         except Exception as exc:
             self.get_logger().error(f"Failed to save costmap: {exc}")
-
+    
+    def _trigger_template_matching(self):
+        if not self._template_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().error('Template matcher service not available')
+            return
+        request = RunTemplateMatching.Request()
+        request.costmap_path = self._latest_npy_path
+        future = self._template_client.call_async(request)
+        future.add_done_callback(self._template_response_cb)
+    
+    def _template_response_cb(self, future):
+        result = future.result()
+        if result.success:
+            self.get_logger().info(f'Template matching done: {result.message}')
+        else:
+            self.get_logger().error(f'Template matching failed: {result.message}')
 
 def main(args=None):
     rclpy.init(args=args)
