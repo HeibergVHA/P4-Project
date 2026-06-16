@@ -5,6 +5,7 @@ from std_msgs.msg import String
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
+from std_srvs.srv import Trigger
 
 # try:
 #     from px4_msgs.msg import VehicleOdometry, VehicleAttitudeSetpoint, \
@@ -130,6 +131,7 @@ class PurePursuitMission(Node):
         self.mode               = "TRACK"
         self.current_lookahead  = 0.0
         self.t_transition_start = 0.0
+        self.lidar_collector_started = False
 
         # QoS 
         px4_qos = QoSProfile(
@@ -168,10 +170,15 @@ class PurePursuitMission(Node):
         
         self.target_w_pub = self.create_publisher(
             PoseStamped, 'uav/target_w_pos', 10)
+        
+        # Service
+        self.lidar_start = self.create_client(Trigger, '/start_recording')
+        self.lidar_stop = self.create_client(Trigger, '/stop_recording')
 
         # Waypoint list
         self.waypoints= [np.array([x, y, z, yaw], dtype=float) for x, y, z, yaw in DEFAULT_WAYPOINTS]
         self.seg_idx = 0        # Index of the of the active segment. segment i goes from waypoints[i] to waypoints[i+1]
+        self.last_seg_idx = 0
 
         # State
         self.pos = np.zeros(3)  # Current position [x, y, z]
@@ -235,7 +242,7 @@ class PurePursuitMission(Node):
             self.seg_idx = 0
             self.get_logger().warn('Mission ABORTED')
         else:
-            self.get_logger().warn(f'Unknown command: "{cmd}"')
+            self.get_logger().warn(f'Unknown command: "{cmd}". Commands: "start", "origin", "reset", "pause", "resume", "abort".')
 
     # Pure-pursuit
     def hybrid_pure_pursuit(self):
@@ -448,11 +455,49 @@ class PurePursuitMission(Node):
 
         self.target_pub.publish(msg)
 
+    def lidar_start_response(self, future):
+        try:
+            response = future.result()
+        except Exception as e:
+            self.get_logger().warn(f'Lidar start service call failed: {e}')
+            return
+        self.get_logger().info(f'Lidar collector respose: {response}')
+        self.lidar_collector_started = response.success
+        if self.lidar_collector_started == False and response.message == 'Already recording':
+            self.lidar_collector_started = True
+    
+    def lidar_stop_response(self, future):
+        try:
+            response = future.result()
+        except Exception as e:
+            self.get_logger().warn(f'Lidar stop service call failed: {e}')
+            return
+        self.get_logger().info(f'Lidar collector respose: {response}')
+        self.lidar_collector_started = not response.success
+        if self.lidar_collector_started == True and response.message == 'Not recording':
+            self.lidar_collector_started = False
+
+    def check_lidar_state_change_need(self):
+        # Check if lidar collector need to start or stop.
+        if self.seg_idx == 2 and not self.lidar_collector_started:
+            request = Trigger.Request()
+            future = self.lidar_start.call_async(request)
+            future.add_done_callback(self.lidar_start_response)
+        
+        has_next = self.seg_idx + 2 < len(self.waypoints)
+        if not has_next and self.lidar_collector_started:
+            future = self.lidar_stop.call_async(Trigger.Request())
+            future.add_done_callback(self.lidar_stop_response)
+        
     # Control loop
     def control_loop(self):
         if not self.mission_active:
             self.publish(self.hold_pos, self.hold_yaw)
             return
+
+        if self.last_seg_idx != self.seg_idx:
+            self.check_lidar_state_change_need()
+            self.last_seg_idx = self.seg_idx
 
         # Compute lookahead reference
         if self.algorithm == "hpp":
