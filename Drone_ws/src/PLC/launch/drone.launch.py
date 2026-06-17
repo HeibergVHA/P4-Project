@@ -79,7 +79,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         lidar_collection,
-        # drone_cltside
+        drone_cltside,
         mavros,
         radio_node,
         mission_planner_node,
