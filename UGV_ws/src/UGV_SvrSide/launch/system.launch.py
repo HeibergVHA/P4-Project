@@ -31,6 +31,22 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # ── Manual Commands Node ──────────────────────────────────────────
+        Node(
+            package='UGV_SvrSide',
+            executable='manual_commands_node',
+            name='manual_commands_node',
+            output='screen',
+        ),
+
+        # ── UGV Controller Node ────────────────────────────────────────────
+        Node(
+            package='UGV_SvrSide',
+            executable='ugv_controller_node',
+            name='ugv_controller_node',
+            output='screen',
+        ),
+
         # ── Costmap Generator — builds costmap from FAST-LIO2 PCD ────────
         Node(
             package='Cost_Map',
