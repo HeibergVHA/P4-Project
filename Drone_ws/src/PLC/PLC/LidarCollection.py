@@ -6,6 +6,7 @@ import subprocess
 import time
 import os 
 import signal
+from control_interfaces.srv import SendBag
 
 class LivoxBagRecorder(Node):
     def __init__(self):
@@ -31,7 +32,7 @@ class LivoxBagRecorder(Node):
 
         self.create_timer(1.0, self._check_send)
 
-        self.send_client = self.create_client(Trigger, '/send')
+        self.send_client = self.create_client(SendBag, '/send')
 
     def start_livox_driver(self):
         self.get_logger().info('Starting Livox driver...')
@@ -97,7 +98,8 @@ class LivoxBagRecorder(Node):
         return response
     
     def trigger_send(self):
-        request = Trigger.Request()
+        request = SendBag.Request()
+        request.bag_path = self.bag_name
         future = self.send_client.call_async(request)
         future.add_done_callback(self.send_response_cb)
     
@@ -106,7 +108,13 @@ class LivoxBagRecorder(Node):
         if result.success:
             self.get_logger().info('send triggered successfully')
         else:
-            self.get_logger().error(f'Failed to trigger send: {result.message}')
+            self.get_logger().error(f'Client couldnt connect, Trying again in 5 sec: {result.message}')
+            self.create_timer(5.0, self._retry_send_once)
+    
+    def _retry_send_once(self):
+        self.destroy_timer(self._timers[-1])
+        self.trigger_send()
+
     
     def _check_send(self):
         if self._pending_send:

@@ -12,6 +12,7 @@ import zipfile
 import os
 import io
 import time
+from control_interfaces.srv import SendBag
 
 
 class Drone_Cltside(Node):
@@ -61,6 +62,7 @@ class Drone_Cltside(Node):
         self._connected = False
         self._lock = threading.Lock()
         self.bag_name = None
+        self._pending_send = False
 
         # services
         self.create_service(
@@ -76,7 +78,7 @@ class Drone_Cltside(Node):
         )
         
         self.create_service(
-            Trigger,
+            SendBag,
             '/send',
             self._cb_send
         )
@@ -84,7 +86,6 @@ class Drone_Cltside(Node):
         self.start_recording_client = self.create_client(Trigger, '/start_recording')
         # connect on startup
         self.stop_recording_client = self.create_client(Trigger,'/stop_recording')
-        self._connect()
         if self.get_parameter('benchmark').get_parameter_value().bool_value:
             threading.Thread(target=self._run_benchmark, daemon=True).start()
 
@@ -105,7 +106,7 @@ class Drone_Cltside(Node):
                 self._sock      = sock
                 self._connected = True
             self.get_logger().info(f'Connected to {host}:{port}')
-            self.trigger_start_recording()
+
             return True, f'Connected to {host}:{port}'
         except Exception as e:
             self.get_logger().error(f'Connection failed: {e}')
@@ -233,7 +234,15 @@ class Drone_Cltside(Node):
         self.get_logger().info(f'Send result: {message}')
     # service callbacks
 
-    def _cb_send(self, _request, response):
+    def _cb_send(self, request, response):
+        self.bag_name = request.bag_path
+
+        if not self._connected:
+            success, message = self._connect()
+            if not success:
+                response.success = False
+                response.message = 'Not connected try again'
+                return response
         threading.Thread(target=self._send_in_thread, args=(response,), daemon=True).start()
         response.success = True
         response.message = 'Send started in background'
