@@ -51,7 +51,7 @@ class UGVController(Node):
         self.get_logger().info(f"Using input source: {self.source}")
 
         # Serial
-        self.ser = serial.Serial('/dev/ttyUSB1', baudrate=115200, timeout=1.0)
+        self.ser = serial.Serial('/dev/ttyACM0', baudrate=115200, timeout=1.0) ###################################
 
         # Subscribers
         self.create_subscription(String, '/ugv/state', self.state_callback, 10)
@@ -92,6 +92,7 @@ class UGVController(Node):
         # Serial thread
         self.zero_found = False
         self.last_steer_deg = 90   # 90 = straight ahead after the +90 offset
+        self.speed_val = 0
         self.last_sent = 0
         self.serial_thread = threading.Thread(target=self.serial_loop, daemon=True)
         self.serial_thread.start()
@@ -191,8 +192,10 @@ class UGVController(Node):
 
                 # Write
                 if self.last_sent < time.time() - self.dt:
-                    steer_byte = bytes([int(np.clip(self.last_steer_deg, 0, 180))])
-                    self.ser.write(steer_byte)
+                    steer_val = int(np.clip(self.last_steer_deg*10, 0, 1800))
+                    speed_val = int(np.clip(self.speed_val*100 , 0, 200))
+                    steer_bytes = f"{steer_val},{speed_val}\n".encode("utf-8")
+                    self.ser.write(steer_bytes)
 
 
                 # Read
@@ -238,6 +241,7 @@ class UGVController(Node):
         steer_deg = steer_deg + 90
 
         self.last_steer_deg = int(steer_deg)
+        self.speed_val = 0.8
         msg = Float32()
         msg.data = float(steer_deg)
         self.steering_angle_pub.publish(msg)
