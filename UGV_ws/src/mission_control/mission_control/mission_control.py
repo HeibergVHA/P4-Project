@@ -41,7 +41,7 @@ class MissionControl(Node):
             (  27.0, 10.73,  10.0,   0.0),
             (  33.3, 16.27,  10.0,   0.0),
             ( 18.37, 26.83,  10.0,   0.0),
-            (  6.39,  5.58,  10.0,   0.0)
+            (  6.39,  5.58,   5.0,   0.0)
             ]
 
         # Service to receive map path and start position
