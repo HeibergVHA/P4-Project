@@ -196,6 +196,7 @@ class UGVController(Node):
                     speed_val = int(np.clip(self.speed_val*100 , 0, 200))
                     steer_bytes = f"{steer_val},{speed_val}\n".encode("utf-8")
                     self.ser.write(steer_bytes)
+                    self.get_logger().info(f"Sent to serial: {steer_bytes}")
 
 
                 # Read
