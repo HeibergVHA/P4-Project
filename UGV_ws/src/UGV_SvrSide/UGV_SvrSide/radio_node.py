@@ -31,7 +31,7 @@ class RadioNode(Node):
     # callbacks
     def target_waypoint_callback(self, msg):
         try:
-            self.radio.write(msg)
+            self.radio.write(msg.data.encode())
         except serial.SerialException as e:
             self.get_logger().warn(f'Radio write failed: {e}')
 

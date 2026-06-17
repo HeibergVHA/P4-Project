@@ -5,10 +5,14 @@ matplotlib.use('Qt5Agg') # Use Qt5Agg backend for interactive plotting
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.widgets import Cursor
+import json
+from std_msgs.msg import String
+from std_srvs.srv import Trigger
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 from control_interfaces.srv import SetMission, SetGoal
+import time
 
 class MissionControl(Node):
     """
@@ -28,6 +32,7 @@ class MissionControl(Node):
         self._start = None # (x,y)
         self._goal = None # also (x,y)
         self._mission_ready = False
+        self._waypoints = []
 
         # Service to receive map path and start position
         self.create_service(
@@ -39,9 +44,10 @@ class MissionControl(Node):
         # Service client
 
         self._goal_client = self.create_client(SetGoal, '/set_goal')
-
+        
+        self._waypoint_pub = self.create_publisher(String, 'ugv/radio_out/target_waypoint', 10)
         # Terminal input
-
+        self.create_service(Trigger, '/send_waypoints', self._cb_send_waypoints)
         self._input_thread = threading.Thread(
             target = self._input_loop, daemon = True
         )
@@ -82,7 +88,6 @@ class MissionControl(Node):
         data = self._costmap
         xs, ys, costs = data[:, 0], data[:, 1], data[:, 2]
 
-        # Reconstruct the 2D grid for imshow
         x_unique = np.sort(np.unique(xs))
         y_unique = np.sort(np.unique(ys))
         res = round(x_unique[1] - x_unique[0], 4)
@@ -94,6 +99,10 @@ class MissionControl(Node):
 
         x_idx = np.round((xs - x_unique[0]) / res).astype(int)
         y_idx = np.round((ys - y_unique[0]) / res).astype(int)
+
+        x_idx = np.clip(x_idx, 0, width - 1)
+        y_idx = np.clip(y_idx, 0, height - 1)
+
         grid[y_idx, x_idx] = costs
 
         cmap = mcolors.LinearSegmentedColormap.from_list(
@@ -223,31 +232,46 @@ class MissionControl(Node):
     #     plt.tight_layout()
     #     plt.show()
 
-    # ---- Terminal input ----
+        # ---- Terminal input ----
 
     def _input_loop(self):
         while rclpy.ok():
             if not self._mission_ready:
                 continue
 
-            print('\nCostmap loaded. Enter target coordinates')
+            print(f'\nDetected start position: ({self._start[0]:.2f}, {self._start[1]:.2f})')
+            
+            while True:
+                choice = input('  Accept start position? (1=Accept, 0=Override): ').strip()
+                if choice == '1':
+                    break
+                elif choice == '0':
+                    try:
+                        self._start = (
+                            float(input('  Start X (m): ').strip()),
+                            float(input('  Start Y (m): ').strip())
+                        )
+                        break
+                    except ValueError:
+                        print('  Invalid coordinates, try again.')
+                else:
+                    print('  Please type 1 to accept or 0 to override.')
 
             try:
-                goal_x = float(input('  Goal X (m):  ').strip())
-                goal_y = float(input('  Goal Y (m):  ').strip())
-            except ValueError:
+                goal_x = float(input('  Goal X (m): ').strip())
+                goal_y = float(input('  Goal Y (m): ').strip())
+            except (ValueError, EOFError):
                 print('Invalid input')
                 continue
 
             self._goal = (goal_x, goal_y)
-
-            print(f' Start : ({self._start[0]:.2f}, {self._start[1]:.2f})\n'
-                  f' Goal  : ({self._goal[0]:.2f}, {self._goal[1]:.2f})\n'
-                  f' Sending goal to A-star node...'
+            print(
+                f'  Start : ({self._start[0]:.2f}, {self._start[1]:.2f})\n'
+                f'  Goal  : ({goal_x:.2f}, {goal_y:.2f})\n'
+                f'  Sending to A*...'
             )
             self._send_goal()
-            self._mission_ready = False # Prevent multiple inputs until next mission is set
-            
+            self._mission_ready = False
     # A-star service call
 
     def _send_goal(self):
@@ -271,6 +295,31 @@ class MissionControl(Node):
         else:
             self.get_logger().error(f'A* rejected goal: {result.message}')
 
+    def _cb_send_waypoints(self, request, response):
+        if not self._waypoints:
+            response.success = False
+            response.message = 'No waypoints defined.'
+            return response
+
+        threading.Thread(target=self._send_waypoints_loop, daemon=True).start()
+        response.success = True
+        response.message = f'Sending {len(self._waypoints)} waypoints'
+        return response
+
+    def _send_waypoints_loop(self):
+        for i, (x, y, z, yaw) in enumerate(self._waypoints):
+            packet = {
+                'type': 'waypoint',
+                'x': float(x),
+                'y': float(y),
+                'z': float(z),
+                'yaw': float(yaw),
+            }
+            msg = String()
+            msg.data = json.dumps(packet) + '\n'
+            self._waypoint_pub.publish(msg)
+            self.get_logger().info(f'Sent waypoint {i+1}/{len(self._waypoints)}: {packet}')
+            time.sleep(0.5)  # small delay between waypoints
 def main(args=None):
     rclpy.init(args=args)
     node = MissionControl()

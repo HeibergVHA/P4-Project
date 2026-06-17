@@ -234,7 +234,9 @@ class LidarTemplateMatcherNode(Node):
             )
 
         except Exception as e:
-            self.get_logger().error(f'Matching failed: {e}')
+            self.get_logger().error(f'Matching failed: {e} — sending to mission control for manual override')
+            # Send (0,0) as placeholder start, operator will override
+            self._trigger_mission_control(np.eye(4), request.costmap_path)
             response.success = False
             response.message = str(e)
 

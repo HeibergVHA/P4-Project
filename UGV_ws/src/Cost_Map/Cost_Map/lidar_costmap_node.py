@@ -93,9 +93,9 @@ class LidarCostmapGenerator(Node):
         self.declare_parameter('pcd_file_path',             'deps/FAST_LIO_ROS2/PCD/scans.pcd')
         self.declare_parameter('map_frame_id',              'map')
         self.declare_parameter('costmap_resolution',        0.05)
-        self.declare_parameter('inflation_radius_meters',   0.30) # The buffer zone between an obstacle or caution cell.
-        self.declare_parameter('flat_caution_threshold',    0.03) # meters above ground plane
-        self.declare_parameter('caution_obstacle_threshold', 0.08) # meters above ground plane
+        self.declare_parameter('inflation_radius_meters',   0.10) # The buffer zone between an obstacle or caution cell.
+        self.declare_parameter('flat_caution_threshold',    0.03) # meters above ground plane 0.03
+        self.declare_parameter('caution_obstacle_threshold', 0.06) # meters above ground plane 0.08
         # Neighbourhood size for the local-extrema filters used in roughness estimation.
         # Larger values smooth noise but may blur small obstacles.
         self.declare_parameter('max_filter_size', 2)
