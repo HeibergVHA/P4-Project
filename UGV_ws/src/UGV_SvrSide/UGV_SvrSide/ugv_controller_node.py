@@ -51,7 +51,7 @@ class UGVController(Node):
         self.get_logger().info(f"Using input source: {self.source}")
 
         # Serial
-        self.ser = serial.Serial('/dev/ttyUSB1', baudrate=115200, timeout=1.0)
+        self.ser = serial.Serial('/dev/ttyACM0', baudrate=115200, timeout=1.0) ###################################
 
         # Subscribers
         self.create_subscription(String, '/ugv/state', self.state_callback, 10)
