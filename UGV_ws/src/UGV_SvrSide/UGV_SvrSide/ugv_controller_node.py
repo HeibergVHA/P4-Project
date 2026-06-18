@@ -196,6 +196,7 @@ class UGVController(Node):
                     speed_val = int(np.clip(self.speed_val*100 , 0, 200))
                     steer_bytes = f"{steer_val},{speed_val}\n".encode("utf-8")
                     self.ser.write(steer_bytes)
+                    self.get_logger().info(f'Sent: {steer_bytes}')
 
 
                 # Read
@@ -205,6 +206,7 @@ class UGVController(Node):
                         angle_str, count_str = raw.split(',', 1)
                         angle_deg = float(angle_str)
                         count     = float(count_str)
+                        self.get_logger().info(f'Received {angle_deg}, {count}')
 
                         if not self.zero_found: # Sanity check because the arduino sometimes sends wrong encoder counts before/during reset.
                             if count < 1:
