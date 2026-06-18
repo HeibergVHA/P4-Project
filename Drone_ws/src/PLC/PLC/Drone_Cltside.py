@@ -53,7 +53,7 @@ class Drone_Cltside(Node):
         super().__init__('drone_Client_side')
 
         # parameters 10.42.0.1
-        self.declare_parameter('host', '127.0.0.1')
+        self.declare_parameter('host', '10.42.0.1')
         self.declare_parameter('port', 12347)
         self.declare_parameter('bag_path', '/ros2_ws/bags/scan_20260517_115246') # default bag path, can be overridden by parameter
         self.declare_parameter('benchmark', False) # if true, runs a benchmark of 100 send iterations on startup and logs the times
