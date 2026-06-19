@@ -40,6 +40,7 @@ from control_interfaces.srv import RunTemplateMatching, SetMission
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 from nav_msgs.msg import OccupancyGrid
 
+import subprocess
 
 class LidarTemplateMatcherNode(Node):
 
@@ -222,7 +223,7 @@ class LidarTemplateMatcherNode(Node):
 
             # 9. Publish pose
             self._publish_pose(final_T)
-
+            self._push_costmap_to_laptop(request.costmap_path)
             # Trigger mission control
             self._trigger_mission_control(final_T, request.costmap_path)
 
@@ -236,6 +237,7 @@ class LidarTemplateMatcherNode(Node):
         except Exception as e:
             self.get_logger().error(f'Matching failed: {e} — sending to mission control for manual override')
             # Send (0,0) as placeholder start, operator will override
+            self._push_costmap_to_laptop(request.costmap_path)
             self._trigger_mission_control(np.eye(4), request.costmap_path)
             response.success = False
             response.message = str(e)
@@ -631,6 +633,18 @@ class LidarTemplateMatcherNode(Node):
 
         return best
 
+    def _push_costmap_to_laptop(self, costmap_path: str):
+        laptop_ip = '10.42.0.96'
+        laptop_user = 'heiberg'
+        remote_dir = f'/home/{laptop_user}/ros2_ws/src/Cost_Map/Cost_Map_Coordinates/'
+        try:
+            subprocess.run(
+                ['scp', costmap_path, f'{laptop_user}@{laptop_ip}:{remote_dir}'],
+                check=True, timeout=10
+            )
+            self.get_logger().info(f'Pushed costmap to laptop: {costmap_path}')
+        except Exception as e:
+            self.get_logger().error(f'Failed to push costmap to laptop: {e}')
     # Step 7 - Crop scene around FGR result
 
     def _crop_around_result(self, scene_down, template_down,
