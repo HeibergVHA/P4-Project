@@ -26,14 +26,14 @@ class RadioNode(Node):
         # Publishers (messages from the radio)
         self.command_pub = self.create_publisher(String, 'uav/radio_in/mission_command', 10)
 
-        self.waypoint_pub = self.create_publisher(PoseStamped, 'uav/radio_in/target_waypoint', 10)
+        self.waypoint_pub = self.create_publisher(String, 'uav/radio_in/target_waypoint', 10)
 
 
         self.read_thread = threading.Thread(target=self.read_loop, daemon=True)
         self.read_thread.start()
         self.lastSend = 0
 
-        self.get_logger().info('RadioNode started')
+        self.get_logger().info('ELE RadioNode started')
 
     # callbacks
     def position_callback(self, msg):
@@ -60,7 +60,7 @@ class RadioNode(Node):
             line = (json.dumps(packet) + '\n').encode()
             self.radio.write(line)
         except serial.SerialException as e:
-            self.get_logger().warn(f'Radio write failed: {e}')
+            self.get_logger().warn(f'ELE Radio write failed: {e}')
 
     def read_loop(self):
         while rclpy.ok():
@@ -71,9 +71,9 @@ class RadioNode(Node):
                 packet = json.loads(line)
                 self.handle_incoming(packet)
             except json.JSONDecodeError:
-                self.get_logger().warn(f'Malformed packet received')
+                self.get_logger().warn(f'ELE Malformed packet received')
             except serial.SerialException as e:
-                self.get_logger().warn(f'Radio read failed: {e}')
+                self.get_logger().warn(f'ELE Radio read failed: {e}')
 
     def handle_incoming(self, packet: dict):
         msg_type = packet.get('type')
@@ -82,22 +82,26 @@ class RadioNode(Node):
             msg = String()
             msg.data = packet.get('command', '')
             self.command_pub.publish(msg)
-            self.get_logger().info(f'Command from UGV: {msg.data}')
+            self.get_logger().info(f'ELE command from WALL-R: {msg.data}')
         if msg_type == 'waypoint':
-            stamp = self.get_clock().now().to_msg()
-            msg = PoseStamped()
-            msg.header.stamp = stamp
-            msg.header.frame_id = 'waypoint'
-            msg.pose.position.x = packet.get('x', 0.0)
-            msg.pose.position.y = packet.get('y', 0.0)
-            msg.pose.position.z = packet.get('z', 0.0)
-            r = R.from_euler('xyz', [0, 0, packet.get('yaw', 0.0)], degrees=True) # Euler degrees to quatanions -->
-            q = r.as_quat()  # [x, y, z, w]
-            msg.pose.orientation.x = q[1] # Always 0. Independent of yaw.
-            msg.pose.orientation.y = q[2] # Always 0. Independent of yaw.
-            msg.pose.orientation.z = q[3]
-            msg.pose.orientation.w = q[0]
+            # stamp = self.get_clock().now().to_msg()
+            # msg = PoseStamped()
+            # msg.header.stamp = stamp
+            # msg.header.frame_id = 'waypoint'
+            # msg.pose.position.x = packet.get('x', 0.0)
+            # msg.pose.position.y = packet.get('y', 0.0)
+            # msg.pose.position.z = packet.get('z', 0.0)
+            # r = R.from_euler('xyz', [0, 0, packet.get('yaw', 0.0)], degrees=True) # Euler degrees to quatanions -->
+            # q = r.as_quat()  # [x, y, z, w]
+            # msg.pose.orientation.x = q[1] # Always 0. Independent of yaw.
+            # msg.pose.orientation.y = q[2] # Always 0. Independent of yaw.
+            # msg.pose.orientation.z = q[3]
+            # msg.pose.orientation.w = q[0]
+            msg = String()
+            msg.data = f"{packet.get('x', 0.0)},{packet.get('y', 0.0)},{packet.get('z', 0.0)},{packet.get('yaw', 0.0)}"
             self.waypoint_pub.publish(msg)
+
+            self.get_logger().info(f'ELE waypoint from WALL-R: {msg}')
 
 
         else:

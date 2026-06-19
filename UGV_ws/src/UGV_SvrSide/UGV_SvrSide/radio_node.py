@@ -32,8 +32,9 @@ class RadioNode(Node):
     def target_waypoint_callback(self, msg):
         try:
             self.radio.write(msg.data.encode())
+            self.get_logger().info(f'UGV radio sent waypoint: {msg}')
         except serial.SerialException as e:
-            self.get_logger().warn(f'Radio write failed: {e}')
+            self.get_logger().warn(f'UGV radio write failed: {e}')
 
     def mission_command_callback(self, msg):
         packet = {
