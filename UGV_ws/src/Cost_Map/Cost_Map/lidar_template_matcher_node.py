@@ -636,7 +636,7 @@ class LidarTemplateMatcherNode(Node):
     def _push_costmap_to_laptop(self, costmap_path: str):
         laptop_ip = '10.42.0.96'
         laptop_user = 'heiberg'
-        remote_dir = f'/home/{laptop_user}/ros2_ws/src/Cost_Map/Cost_Map_Coordinates/'
+        remote_dir = f'/home/{laptop_user}/ros2_ws/UGV_ws/src/Cost_Map/Cost_Map_Coordinates/'
         try:
             subprocess.run(
                 ['scp', costmap_path, f'{laptop_user}@{laptop_ip}:{remote_dir}'],
